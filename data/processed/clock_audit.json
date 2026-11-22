@@ -1,0 +1,15 @@
+{
+  "counts": {
+    "parsed": 208674,
+    "arrival_clock_mismatch": 1
+  },
+  "examples": [
+    {
+      "FlightDate": "2025-07-14",
+      "Origin": "JAX",
+      "Dest": "DCA",
+      "ArrTime": "2038",
+      "ActualElapsedTime": "280.00"
+    }
+  ]
+}

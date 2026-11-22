@@ -1,0 +1,135 @@
+{
+  "created_utc": "2026-11-22T04:30:28.194604+00:00",
+  "target_month": "2025-07",
+  "context_dates": [
+    "2025-06-30",
+    "2025-08-01"
+  ],
+  "airport": "JFK",
+  "carriers": [
+    "AA",
+    "B6",
+    "DL"
+  ],
+  "sources": [
+    {
+      "url": "https://www.transtats.bts.gov/PREZIP/On_Time_Reporting_Carrier_On_Time_Performance_1987_present_2025_6.zip",
+      "local": "data/raw/bts/2025_6.zip",
+      "bytes": 31131411,
+      "sha256": "087b75e4e059516ca1181e58955d062f341933adb2706e5b2404ed10c9ecbdc6",
+      "csv_member": "On_Time_Reporting_Carrier_On_Time_Performance_(1987_present)_2025_6.csv"
+    },
+    {
+      "url": "https://www.transtats.bts.gov/PREZIP/On_Time_Reporting_Carrier_On_Time_Performance_1987_present_2025_7.zip",
+      "local": "data/raw/bts/2025_7.zip",
+      "bytes": 32208704,
+      "sha256": "74309a3a734d5104b4c212390c06eb3acacff15124b9cea49ba7d69a609a0d19",
+      "csv_member": "On_Time_Reporting_Carrier_On_Time_Performance_(1987_present)_2025_7.csv"
+    },
+    {
+      "url": "https://www.transtats.bts.gov/PREZIP/On_Time_Reporting_Carrier_On_Time_Performance_1987_present_2025_8.zip",
+      "local": "data/raw/bts/2025_8.zip",
+      "bytes": 30864245,
+      "sha256": "405668b8a807266236a635efbc1e9364abfb756db1a5c895e45abc9c7b7684f1",
+      "csv_member": "On_Time_Reporting_Carrier_On_Time_Performance_(1987_present)_2025_8.csv"
+    }
+  ],
+  "timezone_reference": {
+    "url": "https://openflights.org/data.php",
+    "sha256": "9387cdb38df5bd664da823f8ccb69fdd9b33a1888f5b7cca09c34a3cd9ff59f9",
+    "missing_airports": [],
+    "license": "Open Database License; see https://openflights.org/data.php#license"
+  },
+  "terminal_mapping": {
+    "mapping": {
+      "AA": "T8",
+      "B6": "T5",
+      "DL": "T4"
+    },
+    "source": "https://www.jfkairport.com/flights/airlines",
+    "caveat": "Current published domestic-airline assignments used as a modeling mapping; not a historical gate-allocation record."
+  },
+  "raw_counts": {
+    "archive_6_rows": 611575,
+    "context_all_carriers": 673803,
+    "context_selected_carriers": 215840,
+    "archive_7_rows": 631428,
+    "archive_8_rows": 602378
+  },
+  "july_jfk_arrivals_by_reporting_carrier_before_screening": {
+    "AA": 1234,
+    "AS": 341,
+    "B6": 3362,
+    "DL": 2671,
+    "YX": 1309,
+    "F9": 309,
+    "HA": 31
+  },
+  "arrival_clock_audit": {
+    "checked_completed_legs": 208674,
+    "maximum_clock_error_minutes": 1,
+    "exact_arrival_clock_match": 208673,
+    "one_minute_rounding_difference": 1
+  },
+  "cleaning_audit": {
+    "counts": {
+      "raw_rows": 215840,
+      "parsed_legs": 208674,
+      "cancelled_or_diverted": 7166,
+      "candidate_arrivals": 7211,
+      "overnight": 1995,
+      "no_consecutive_departure": 434,
+      "invalid_or_long_stay": 666,
+      "retained_visits": 4116
+    },
+    "airport": "JFK",
+    "baseline_taxi": 10.0,
+    "clearance": 5.0,
+    "max_stay": 360.0,
+    "limitations": [
+      "Retained matched domestic visits only; not full airport demand.",
+      "Unobserved flights and towing can invalidate occupancy proxies.",
+      "Terminal mapping and base taxi time are supplied assumptions."
+    ]
+  },
+  "retained_july_visits": 3877,
+  "retained_by_date": {
+    "2025-07-01": 107,
+    "2025-07-02": 129,
+    "2025-07-03": 116,
+    "2025-07-04": 137,
+    "2025-07-05": 129,
+    "2025-07-06": 137,
+    "2025-07-07": 134,
+    "2025-07-08": 106,
+    "2025-07-09": 111,
+    "2025-07-10": 134,
+    "2025-07-11": 147,
+    "2025-07-12": 113,
+    "2025-07-13": 114,
+    "2025-07-14": 72,
+    "2025-07-15": 123,
+    "2025-07-16": 124,
+    "2025-07-17": 135,
+    "2025-07-18": 142,
+    "2025-07-19": 133,
+    "2025-07-20": 115,
+    "2025-07-21": 144,
+    "2025-07-22": 138,
+    "2025-07-23": 140,
+    "2025-07-24": 144,
+    "2025-07-25": 111,
+    "2025-07-26": 123,
+    "2025-07-27": 108,
+    "2025-07-28": 147,
+    "2025-07-29": 144,
+    "2025-07-30": 127,
+    "2025-07-31": 93
+  },
+  "retained_by_carrier": {
+    "B6": 1744,
+    "AA": 690,
+    "DL": 1443
+  },
+  "cleaned_sha256": "33ca93fe8b50489fffab46db9872561a6a08320ec34c3a728a3e9f96bb54f6ae"
+}

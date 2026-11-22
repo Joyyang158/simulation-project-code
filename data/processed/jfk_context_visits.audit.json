@@ -1,0 +1,21 @@
+{
+  "counts": {
+    "raw_rows": 215840,
+    "parsed_legs": 208674,
+    "cancelled_or_diverted": 7166,
+    "candidate_arrivals": 7211,
+    "overnight": 1995,
+    "no_consecutive_departure": 434,
+    "invalid_or_long_stay": 666,
+    "retained_visits": 4116
+  },
+  "airport": "JFK",
+  "baseline_taxi": 10.0,
+  "clearance": 5.0,
+  "max_stay": 360.0,
+  "limitations": [
+    "Retained matched domestic visits only; not full airport demand.",
+    "Unobserved flights and towing can invalidate occupancy proxies.",
+    "Terminal mapping and base taxi time are supplied assumptions."
+  ]
+}

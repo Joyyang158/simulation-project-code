@@ -1,0 +1,3 @@
+# Preserve input data bytes so provenance SHA-256 hashes survive checkout.
+*.csv -text whitespace=cr-at-eol
+*.dat -text
