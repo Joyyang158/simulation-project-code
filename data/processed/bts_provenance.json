@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-11-22T04:30:28.194604+00:00",
+  "created_utc": "2026-11-22T23:27:11.940780+00:00",
   "target_month": "2025-07",
   "context_dates": [
     "2025-06-30",
@@ -84,7 +84,7 @@
     },
     "airport": "JFK",
     "baseline_taxi": 10.0,
-    "clearance": 5.0,
+    "clearance": 0.0,
     "max_stay": 360.0,
     "limitations": [
       "Retained matched domestic visits only; not full airport demand.",
@@ -131,5 +131,5 @@
     "AA": 690,
     "DL": 1443
   },
-  "cleaned_sha256": "33ca93fe8b50489fffab46db9872561a6a08320ec34c3a728a3e9f96bb54f6ae"
+  "cleaned_sha256": "a8030c949319147acb4ac592057e05e303fbd577a210d790f2832b50a0907ee3"
 }

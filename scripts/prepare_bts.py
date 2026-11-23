@@ -124,7 +124,7 @@ def main():
     if clocks["arrival_clock_error_over_one_minute"]:
         raise ValueError("Arrival clocks inconsistent with timezone/elapsed reconstruction; inspect before modeling")
     audit = clean_bts(rawcsv, reference / "timezones.csv", reference / "terminals.csv",
-                      "JFK", processed / "jfk_context_visits.csv")
+                      "JFK", processed / "jfk_context_visits.csv", clearance=0.0)
     visits = [r for r in read_csv(processed / "jfk_context_visits.csv") if r["date"].startswith("2025-07")]
     if not visits:
         raise ValueError("No retained July visits; inspect cleaning audit")

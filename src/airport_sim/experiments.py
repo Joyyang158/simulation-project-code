@@ -6,6 +6,7 @@ import platform
 import hashlib
 import importlib.metadata
 import numpy as np
+from scipy.stats import gamma
 from .inputs import load_days, synthetic_day, write_csv
 from .metrics import confidence_interval, paired_difference
 from .random_inputs import exponential, poisson_arrivals, streams
@@ -16,7 +17,8 @@ DEFAULT_CONFIG = dict(horizon=1440, flights_per_day=200, mean_service=45,
                       gates_per_terminal=4, shared_gates_per_terminal=2,
                       transfer_times=[0, 10, 20, 40], single_loads=[.5, .7, .85, .95],
                       closure_start=480, closure_duration=120, smoothing=.5,
-                      initial_busy_until=0, service_mode="resample_by_airline")
+                      initial_busy_until=0, input_mode="empirical", service_mode="resample_by_airline",
+                      demand_multiplier=1)
 
 
 def configuration(path=None):
@@ -27,13 +29,17 @@ def configuration(path=None):
         if unknown:
             raise ValueError(f"Unknown configuration keys: {sorted(unknown)}")
         cfg.update(given)
+    if cfg["input_mode"] not in {"empirical", "calibrated_synthetic"}:
+        raise ValueError("Invalid input_mode")
+    if cfg["input_mode"] == "calibrated_synthetic" and cfg["service_mode"] == "observed_day":
+        raise ValueError("Synthetic inputs cannot replay observed services")
     if cfg["service_mode"] not in {"resample_by_airline", "observed_day"}:
         raise ValueError("service_mode must be resample_by_airline or observed_day")
     for key in ("horizon", "mean_service"):
         if not np.isfinite(cfg[key]) or cfg[key] <= 0:
             raise ValueError(f"{key} must be positive and finite")
-    for key in ("gates_per_terminal", "flights_per_day"):
-        if not isinstance(cfg[key], int) or cfg[key] < 1:
+    for key in ("gates_per_terminal", "flights_per_day", "demand_multiplier"):
+        if type(cfg[key]) is not int or cfg[key] < 1:
             raise ValueError(f"{key} must be a positive integer")
     if not isinstance(cfg["shared_gates_per_terminal"], int) or not 0 <= cfg["shared_gates_per_terminal"] <= cfg["gates_per_terminal"]:
         raise ValueError("Invalid shared gate count")
@@ -70,7 +76,27 @@ def smooth_day(flights, horizon, strength):
             for i, f in enumerate(ordered)]
 
 
-def run_experiments(output, replications=30, seed=553, config_path=None, data_path=None):
+def expand_day(flights, multiplier, rng, horizon):
+    """Keep originals; add unique flights within each source arrival's 30-min bin.
+
+    This is a constructed demand stress test, never additional observed traffic.
+    Copy-major order makes lower demand levels prefixes of higher levels.
+    """
+    expanded = list(flights)
+    used_ids = {f.id for f in flights}
+    for copy in range(1, multiplier):
+        for f in flights:
+            identifier = f"{f.id}::stress{copy}"
+            while identifier in used_ids:
+                identifier += ":"
+            used_ids.add(identifier)
+            lower = 30 * np.floor(f.arrival / 30)
+            expanded.append(replace(f, id=identifier,
+                arrival=float(rng.uniform(lower, min(lower + 30, horizon)))))
+    return expanded
+
+
+def run_experiments(output, replications=100, seed=553, config_path=None, data_path=None):
     if replications < 2 or seed < 0:
         raise ValueError("Use at least two replications and a nonnegative seed")
     cfg = configuration(config_path)
@@ -78,6 +104,11 @@ def run_experiments(output, replications=30, seed=553, config_path=None, data_pa
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     days = load_days(data_path, horizon) if data_path else None
+    calibrated = cfg["input_mode"] == "calibrated_synthetic"
+    if calibrated and not days:
+        raise ValueError("Calibrated synthetic inputs require --data")
+    if cfg["demand_multiplier"] != 1 and not days:
+        raise ValueError("Demand stress tests require a reference --data file")
     all_flights = [f for fs in days.values() for f in fs] if days else []
     airlines_by_terminal = {}
     for f in all_flights:
@@ -90,16 +121,43 @@ def run_experiments(output, replications=30, seed=553, config_path=None, data_pa
     service_pools = {a: [f.service for f in all_flights if f.airline == a]
                      for a in {f.airline for f in all_flights}}
 
+    profiles = {}
+    for airline, pool in service_pools.items():
+        mean, variance = float(np.mean(pool)), float(np.var(pool))
+        bins = np.linspace(0, horizon, int(np.ceil(horizon / 30)) + 1)
+        counts, _ = np.histogram([f.arrival for f in all_flights if f.airline == airline], bins)
+        profiles[airline] = dict(mean=mean, variance=variance,
+                                 bin_edges=bins.tolist(), probabilities=(counts / counts.sum()).tolist())
+
+    def gamma_services(uniforms, pool):
+        mean, variance = float(np.mean(pool)), float(np.var(pool))
+        return (gamma.ppf(np.clip(uniforms, np.finfo(float).eps, 1 - np.finfo(float).eps),
+                          mean * mean / variance, scale=variance / mean)
+                if variance else np.full(len(uniforms), mean))
+
     def day(rep, alternate_seed=seed):
         if not days:
             return synthetic_day(alternate_seed, rep, horizon, cfg["mean_service"], cfg["flights_per_day"]), "SYNTHETIC"
         arrival_rng, service_rng, _ = streams(alternate_seed, rep)
         selected = list(days)[int(arrival_rng.integers(len(days)))]
+        # Separate stream: expansion does not alter date or service draws.
+        expansion_rng, _, _ = streams(alternate_seed + 202, rep)
+        templates = expand_day(days[selected], cfg["demand_multiplier"], expansion_rng, horizon)
+        if calibrated:
+            generated = []
+            for f in templates:
+                profile = profiles[f.airline]
+                index = int(arrival_rng.choice(len(profile["probabilities"]), p=profile["probabilities"]))
+                edges = profile["bin_edges"]
+                arrival = float(arrival_rng.uniform(edges[index], edges[index + 1]))
+                service = float(gamma_services(service_rng.random(1), service_pools[f.airline])[0])
+                generated.append(replace(f, arrival=arrival, service=service))
+            return generated, selected
         if cfg["service_mode"] == "observed_day":
-            return list(days[selected]), selected
+            return templates, selected
         # Bind the service draw to the flight before any policy executes.
         return [replace(f, service=float(service_rng.choice(service_pools[f.airline])))
-                for f in days[selected]], selected
+                for f in templates], selected
 
     rows, comparisons = [], []
     single_mean = float(np.mean([f.service for f in all_flights])) if days else cfg["mean_service"]
@@ -141,7 +199,9 @@ def run_experiments(output, replications=30, seed=553, config_path=None, data_pa
             arrival_rng, service_rng, _ = streams(seed + 101, rep)
             times = poisson_arrivals(arrival_rng, rho / single_mean, horizon)
             u = service_rng.random(len(times))
-            if days:
+            if calibrated:
+                services = gamma_services(u, single_pool)
+            elif days:
                 services = single_pool[np.minimum((u * len(single_pool)).astype(int), len(single_pool) - 1)]
             else:
                 services = -single_mean * np.log1p(-u)
@@ -174,13 +234,31 @@ def run_experiments(output, replications=30, seed=553, config_path=None, data_pa
     crn = dict(paired_difference_variance=paired_var, independent_difference_variance=independent_var,
                variance_ratio_independent_over_crn=independent_var / paired_var if paired_var else None,
                note="Empirical variance comparison; CRN is not guaranteed to improve every scenario.")
-    metadata = dict(seed=seed, replications=replications, config=cfg, python=platform.python_version(),
+    if not days:
+        service_sampling = "Synthetic Erlang(4), single-gate exponential"
+    elif calibrated:
+        service_sampling = "Moment-matched Gamma; empirical half-hour arrival profile"
+    elif cfg["service_mode"] == "observed_day":
+        service_sampling = ("Source-service copies with generated extra arrivals; not an observed-day replay"
+                            if cfg["demand_multiplier"] > 1
+                            else "Observed day services (dependence-preserving replay)")
+    else:
+        service_sampling = "By-airline empirical resampling"
+    metadata = dict(seed=seed, replications=replications,
+                    config={k: v for k, v in cfg.items() if not days or k not in {"flights_per_day", "mean_service"}}, python=platform.python_version(),
                     packages={name: importlib.metadata.version(name) for name in ("numpy", "scipy", "matplotlib")},
                     input_sha256=hashlib.sha256(Path(data_path).read_bytes()).hexdigest() if days else None,
                     input_source=str(Path(data_path).resolve()) if days else "SYNTHETIC DEMONSTRATION — no BTS calibration",
                     selected_terminal=selected_terminal, gates=[asdict(g) for g in gates],
                     input_dates=list(days) if days else [],
-                    service_sampling=("Observed day services (dependence-preserving replay)" if cfg["service_mode"] == "observed_day" else "By-airline empirical resampling") if days else "Synthetic Erlang(4), single-gate exponential",
+                    calibration_profiles=profiles if calibrated else None,
+                    input_mode=cfg["input_mode"] if days else "legacy_synthetic",
+                    demand_expansion=dict(multiplier=cfg["demand_multiplier"],
+                        applies_to="Terminal and network only; single-gate offered loads unchanged",
+                        interpretation="Constructed BTS-based stress test" if cfg["demand_multiplier"] > 1 else "Reference demand",
+                        method="Keep originals; added empirical arrivals uniform within source 30-minute bin; synthetic arrivals follow calibrated profile",
+                        service_rule="Added flights retain source service in observed_day mode; otherwise all services are sampled by airline"),
+                    service_sampling=service_sampling,
                     single_service_mean=single_mean,
                     single_variability="S_low = mean + 0.5*(S-mean); population mean unchanged, variance quartered",
                     ci_estimand="Mean replication metric; p95_wait CI estimates mean daily p95, not pooled-flight p95",
@@ -190,11 +268,11 @@ def run_experiments(output, replications=30, seed=553, config_path=None, data_pa
     write_csv(output / "paired_differences.csv", comparisons)
     (output / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     from .plots import experiment_plots
-    experiment_plots(summary, comparisons, cfg, output, synthetic=not bool(days))
+    experiment_plots(summary, comparisons, cfg, output, synthetic=calibrated or not bool(days))
     return metadata
 
 
-def validate_mm1(output, replications=30, seed=553, warmup=5000, duration=20000):
+def validate_mm1(output, replications=100, seed=553, warmup=5000, duration=20000):
     """Steady-state replication/deletion (Ch. 6), service mean one minute."""
     if replications < 2 or seed < 0 or not np.isfinite(warmup) or warmup < 0 or not np.isfinite(duration) or duration <= 0:
         raise ValueError("Invalid validation parameters")

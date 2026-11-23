@@ -29,7 +29,10 @@ def mm1_plot(rows, output):
 
 
 def experiment_plots(summary, differences, cfg, output, synthetic):
-    label = "Synthetic demonstration" if synthetic else "BTS-derived subset; assumed gate capacities"
+    label = ("Calibrated synthetic inputs" if cfg.get("input_mode") == "calibrated_synthetic"
+             else "Synthetic demonstration" if synthetic else "BTS-derived subset; assumed gate capacities")
+    if cfg.get("demand_multiplier", 1) > 1:
+        label += f"; {cfg['demand_multiplier']}x constructed demand"
     lookup = {(r["scenario"], r["metric"]): r for r in summary}
     fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
     for variant, title in (("base", "Original variability"), ("low_variability", "Half the service CV")):

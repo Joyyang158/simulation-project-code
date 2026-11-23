@@ -53,7 +53,14 @@ class BTSAdapterTests(unittest.TestCase):
             visits = load_days(p / "visits.csv")
             f = visits["2025-01-02"][0]
             self.assertEqual(f.arrival, 415)  # 07:00 - 15 + assumed 10 min.
-            self.assertEqual(f.service, 65)  # 60 min proxy + 5 min buffer.
+            self.assertEqual(f.service, 60)  # Actual departure 08:00 minus arrival 07:00.
+            self.assertEqual(audit["clearance"], 0)
+            from datetime import datetime
+            from airport_sim.inputs import read_csv
+            row = read_csv(p / "visits.csv")[0]
+            duration = (datetime.fromisoformat(row["next_gate_departure_utc"]) -
+                        datetime.fromisoformat(row["actual_gate_arrival_utc"])).total_seconds() / 60
+            self.assertEqual(float(row["service"]), duration)
             # A known but unparseable intervening leg must not be bridged.
             bad = dict(legs[0], ORIGIN="XXX", CRS_DEP_TIME=2200)
             write_csv(p / "raw.csv", legs + [bad])

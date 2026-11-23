@@ -11,7 +11,7 @@
   },
   "airport": "JFK",
   "baseline_taxi": 10.0,
-  "clearance": 5.0,
+  "clearance": 0.0,
   "max_stay": 360.0,
   "limitations": [
     "Retained matched domestic visits only; not full airport demand.",

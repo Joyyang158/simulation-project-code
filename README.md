@@ -1,5 +1,42 @@
 # Airport gate queue simulation
 
+## 当前正式实验：恢复原始需求，每航站楼 4 个 gate
+
+主报告保留两个 part：校准合成输入与 BTS 原始需求案例。两版均为 **T4/DL、T5/B6、T8/AA，每航站楼 4 个 gate，其中 2 个支持跨航站楼共享，共 12 个 gate**。均使用 seed=553、100 次重复、1440 分钟观察窗口并在日末排空。真实样本仍为 **3,877 条、31 天，平均 125.06 航班/日**；主实验 `demand_multiplier=1`，没有复制扩增航班。
+
+合成版保持抽中日期各航司的实际航班数，使用航司半小时到达直方图和匹配经验均值/总体方差的 Gamma 服务。BTS baseline 保留实际请求时间并按航司重抽服务代理值；observed-day 模式重放原日期的服务值。两版容量、航班数、航司映射和服务分布矩对齐，不要求到达依赖结构、服务尾部及有限样本值完全一样。单 gate setting 始终为 1 个 gate，均值 100.6724 分钟和相同 Poisson 负荷。
+
+```bash
+python scripts/run_main.py
+python scripts/run_scaling.py
+python run.py validate --replications 100 --output results/validation_100
+python run.py diagnose --data data/processed/jfk_2025_07.csv --output results/inputs_current
+python scripts/build_current_report.py
+python -m unittest discover -s tests
+```
+
+报告生成脚本读取相邻 `report/` 仓库保留的版式模板，更新两个 part，并在合并版最后追加 scaling 实验。PDF 编译（在 `report/` 仓库运行）：
+
+```bash
+latexmk -pdf -interaction=nonstopmode -halt-on-error -outdir=build/report report.tex
+cp build/report/report.pdf report.pdf
+```
+
+## 最后的合成数据 scaling 测试
+
+- 航站楼数：**1、2、3、4、5**。
+- 每航站楼 gate 数：**1、5、10、20、50**，完整 **25 种配置**。
+- 每种配置 100 次重复，对比无共享、零转移共享、20 分钟转移共享，共 7,500 次政策运行。
+- 每航站楼每天独立 Poisson 航班数，期望固定为 **41.69**；使用 BTS 汇总的半小时到达曲线、均值 100.67 分钟且匹配总体方差的 Gamma 服务。这里全部航班为合成数据，航站楼同分布，不使用实际航司映射。
+- 增加航站楼时总需求随之增加；增加 gates 时需求不变。相同重复下各容量/政策使用相同输入，增加航站楼保留已有航站楼的航班。
+- 可共享 gates 为 `ceil(c/2)`，对应 1、3、5、10、25。记录等待、利用率、完成量和模拟器运行耗时；耗时是本机描述性计时，不是受控硬件基准。
+
+结果分别位于 `results/main/`、`results/scaling/`；报告副本在 `report/results_main/`、`report/results_scaling/`。当前清洗数据、时间戳、来源审计及诊断图位于 `report/results_inputs/`。主实验逐日期检查未扩增的航班数，scaling 检查完整网格和同一配置输入一致。
+
+之前的 20-gate 原始需求及 5 倍压力实验已退出当前报告，配置、结果和生成脚本仅保留作历史复现。`build_stress_report.py` 属于历史脚本，不是当前报告入口。旧无 `--data` 演示也不属于当前对齐的主实验。
+
+以下为原演示及数据清洗说明。
+
 课程项目：从单机位 FCFS 到多机位 pooling，再到受兼容性限制的跨航站楼共享。全部时间单位是 **分钟**。实现采用 Python 离散事件仿真，核心分配规则可在 `src/airport_sim/simulator.py` 中直接检查。
 
 **默认不带 `--data` 的运行仍为合成演示。另已完成 BTS 真实数据驱动版本：2025 年 7 月 JFK 的 AA、B6、DL 子系统，3,877 次筛选后周转、31 天。** 真实版使用航班到达记录和周转代理；机位数量、兼容性和基础滑行仍是假设，模拟等待不等于实际 JFK 等待。真实版运行方式见文末。
@@ -12,8 +49,8 @@
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install -e .
-python run.py run --config configs/demo.json --replications 30
-python run.py validate --replications 30
+python run.py run --config configs/demo.json --replications 100
+python run.py validate --replications 100
 python -m unittest discover -s tests -v
 ```
 
@@ -21,8 +58,8 @@ python -m unittest discover -s tests -v
 
 ```bash
 conda activate py310daily
-python run.py run --config configs/demo.json --replications 30
-python run.py validate --replications 30
+python run.py run --config configs/demo.json --replications 100
+python run.py validate --replications 100
 python -m unittest discover -s tests -v
 ```
 
@@ -64,12 +101,12 @@ python -m unittest discover -s tests -v
 
 无真实数据时，每天 200 架次，65% 归 T1，35% 归 T2。每楼 65% 的到达集中于各自高峰，其他在日内较宽窗口均匀分布。多机位服务为 Erlang(4)，平均 45 分钟。该设置故意形成拥堵以展示策略差异。
 
-默认每个条件 30 次重复，`--seed` 默认 553。30 次是起点，高负荷及尾部指标可需要更多重复。
+默认每个条件 100 次重复，`--seed` 默认 553。合成主实验、BTS 主实验、observed-day 敏感性、scaling 和 M/M/1 验证均使用 100 次重复。
 
 ## M/M/1 理论验证
 
 ```bash
-python run.py validate --replications 30 --warmup 5000 --duration 20000
+python run.py validate --replications 100 --warmup 5000 --duration 20000
 ```
 
 服务均值设为 1 分钟，`rho = lambda/mu`。每次先模拟 5000 分钟预热，只统计之后 20000 分钟内到达飞机的等待；继续运行直到这些飞机完成。比较公式：
@@ -117,11 +154,11 @@ DL,T2
 ```bash
 python run.py clean --raw data/raw/flights.csv \
   --timezones data/timezones.csv --terminals data/terminals.csv \
-  --airport JFK --baseline-taxi 10 --clearance 5 --max-stay 360 \
+  --airport JFK --baseline-taxi 10 --clearance 0 --max-stay 360 \
   --output data/processed/visits.csv
 
 python run.py diagnose --data data/processed/visits.csv
-python run.py run --data data/processed/visits.csv --replications 30 --output results/bts
+python run.py run --data data/processed/visits.csv --replications 100 --output results/bts
 ```
 
 清洗逻辑：
@@ -129,10 +166,10 @@ python run.py run --data data/processed/visits.csv --replications 30 --output re
 1. 当地计划出发时刻加出发延误，在 UTC 下加实际 elapsed time 得到实际进位时间，避免跨时区与午夜的 HHMM 相减错误。
 2. 同一机尾仅匹配连续观察到的到达与下一次出发；去重，剔除取消、备降、缺机尾、非正/过长停场及过夜停场。若某机尾存在无法解析的航段，保守排除整个机尾，避免跨过已知缺失航段配对。该规则可能损失较多样本，应检查审计计数。
 3. 申请机位时刻为推导进位时间减 TaxiIn，再加假设的基础滑行时间。TaxiIn 并非纯排队标签。
-4. 服务时间为相邻进位到离位的停场代理加 clearance buffer。未观察到的航段及拖移仍可能让代理失真。
+4. 服务时间为同一飞机下一次在 JFK 的实际离开时间减去本次实际到达时间，不加清场缓冲（`clearance=0`）。清洗后保留两端 UTC 时间戳，逐条验证差值。未观察到的航段及拖移仍可能让停场代理失真。
 5. 不处理时长为 23/25 小时的夏令时转换日，不猜测含糊的出发时刻。所有剔除写入 `visits.audit.json`。
 
-生成 CSV 的必需列为 `date,id,arrival,service,terminal,airline`，也可由用户自己的清洗流程生成。`arrival` 为当日零点后的分钟数，`service` 已包含清空缓冲。`run --data` 按整天重采样到达，并按航司经验重采样服务；这些是**成功匹配的子系统航班**，不能称为机场全部日需求。
+生成 CSV 的必需列为 `date,id,arrival,service,terminal,airline`，也可由用户自己的清洗流程生成。`arrival` 为当日零点后的分钟数，`service` 是匹配的 gate 离开时间减到达时间，不含额外缓冲；`actual_gate_arrival_utc` 和 `next_gate_departure_utc` 用于核对差值。`run --data` 按整天重采样到达，并按航司经验重采样服务；这些是**成功匹配的子系统航班**，不能称为机场全部日需求。
 
 `diagnose` 按日期将前约 80% 作为拟合数据，其余留出；输出指数、Gamma、Lognormal 的拟合参数、AIC、训练和留出 KS 统计量。估计了参数后不能直接套用标准 KS p 值，因此不输出误导性 p 值。拟合为诊断用途，`run` 默认仍使用经验服务重采样，不会偷偷按 AIC 切换模型；需要正式留出实验时，应将训练/留出 CSV 分开并明确实验设计。存在服务相关性时，独立重采样是假设，需要进一步分组或块重采样敏感性研究。
 
@@ -195,7 +232,7 @@ python run.py diagnose --data data/processed/jfk_2025_07.csv --output results/bt
 - 完成并解析 208,674 条，208,673 条进位时钟完全一致，1 条差一分钟。
 - 候选 JFK 到达 7,211 次；剔除过夜 1,995 次、无法连续匹配 434 次、非正或超过六小时停场 666 次。
 - 上下文保留 4,116 次；按机位请求日期限定七月后为 **3,877 次**：AA 690、B6 1,744、DL 1,443。
-- 日样本量 72–147，服务代理均值 105.67 分钟（含 5 分钟清空缓冲）。
+- 日样本量 72–147，服务代理均值 100.67 分钟（实际离开减到达，无额外清空缓冲）。
 
 运行正式的 100 次重复实验：
 
@@ -224,5 +261,5 @@ python run.py run --data data/processed/jfk_2025_07.csv \
 
 报告位于相邻 `report/report_bts.tex` 与 `report/report_bts.pdf`，包括页码、五张图、筛选审计、
 拟合诊断、结果表及相关性敏感性分析。主文件 `report/report.tex`、`report/report.pdf` 合并两部分：Part I 为合成实验，Part II 为 BTS 实验，页码连续。独立合成版保存在 `report/report_synthetic.tex/pdf`，独立 BTS 版保存在 `report/report_bts.tex/pdf`。
-真实版结果表明，在这些假设下网络平均等待从不共享的 123.94 分钟降至零转移共享的 59.40 分钟；
+真实版结果表明，在这些假设下网络平均等待从不共享的 105.60 分钟降至零转移共享的 47.48 分钟；
 这是模拟策略对比，不能解释为实际 JFK 的观测等待。

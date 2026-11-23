@@ -1,0 +1,24 @@
+{
+  "horizon": 1440,
+  "gates_per_terminal": 20,
+  "shared_gates_per_terminal": 10,
+  "transfer_times": [
+    0,
+    10,
+    20,
+    40
+  ],
+  "single_loads": [
+    0.5,
+    0.7,
+    0.85,
+    0.95
+  ],
+  "closure_start": 480,
+  "closure_duration": 120,
+  "smoothing": 0.5,
+  "initial_busy_until": 0,
+  "service_mode": "resample_by_airline",
+  "input_mode": "empirical",
+  "demand_multiplier": 5
+}

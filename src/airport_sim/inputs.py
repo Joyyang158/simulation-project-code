@@ -81,7 +81,7 @@ ALIASES = {
 
 
 def clean_bts(raw_path, timezone_path, terminal_path, airport, output,
-              baseline_taxi=10.0, clearance=5.0, max_stay=360.0):
+              baseline_taxi=10.0, clearance=0.0, max_stay=360.0):
     """Use scheduled local departure + delay, UTC elapsed time, then destination TZ.
 
     Requires domestic raw records for all observed legs of each tail, including
@@ -181,7 +181,9 @@ def clean_bts(raw_path, timezone_path, terminal_path, airport, output,
             rows.append(dict(date=str(request.date()), id=f"{tail}-{incoming['dep'].isoformat()}",
                              arrival=arrival, service=stay + clearance,
                              terminal=terminal_map[airline], airline=airline,
-                             turnaround_proxy=stay))
+                             turnaround_proxy=stay,
+                             actual_gate_arrival_utc=incoming["arr"].isoformat(),
+                             next_gate_departure_utc=outgoing["dep"].isoformat()))
     rows.sort(key=lambda r: (r["date"], r["arrival"], r["id"]))
     counts["retained_visits"] = len(rows)
     write_csv(output, rows)

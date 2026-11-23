@@ -37,6 +37,34 @@ class PipelineTests(unittest.TestCase):
             self.assertTrue(all(float(r["mean"]) == 0 for r in diff if r["metric"] == "n_flights"))
             self.assertTrue(json.loads((root / "output" / "metadata.json").read_text())["packages"])
 
+    def test_calibrated_inputs_keep_counts_capacity_and_reproducibility(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "visits.csv"
+            write_csv(source, [dict(date=f"2025-07-{day+1:02d}", id=f.id,
+                arrival=f.arrival, service=f.service, terminal=f.terminal, airline=f.airline)
+                for day in range(3) for f in synthetic_day(7, day, count=20+day)])
+            config = root / "config.json"
+            config.write_text(json.dumps(dict(input_mode="calibrated_synthetic",
+                gates_per_terminal=20, shared_gates_per_terminal=10)))
+            with patch("airport_sim.plots.experiment_plots"), contextlib.redirect_stdout(io.StringIO()):
+                first = run_experiments(root / "a", replications=2, data_path=source, config_path=config)
+                run_experiments(root / "b", replications=2, data_path=source, config_path=config)
+                config.write_text(json.dumps(dict(gates_per_terminal=20, shared_gates_per_terminal=10)))
+                real = run_experiments(root / "real", replications=2, data_path=source, config_path=config)
+            self.assertEqual((root / "a/replications.csv").read_bytes(), (root / "b/replications.csv").read_bytes())
+            self.assertEqual(first["gates"], real["gates"])
+            a = read_csv(root / "a/replications.csv")
+            b = read_csv(root / "real/replications.csv")
+            self.assertEqual([(r["sampled_date"], r["n_flights"]) for r in a],
+                             [(r["sampled_date"], r["n_flights"]) for r in b])
+            generated = read_csv(root / "a/flight_records/network_no_sharing.csv")
+            observed = read_csv(root / "real/flight_records/network_no_sharing.csv")
+            self.assertEqual({r["id"] for r in generated}, {r["id"] for r in observed})
+            self.assertTrue(all(0 <= float(r["arrival"]) < 1440 and float(r["service"]) > 0 for r in generated))
+            self.assertNotEqual([r["arrival"] for r in generated], [r["arrival"] for r in observed])
+
     def test_observed_day_mode_preserves_service_inputs(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
