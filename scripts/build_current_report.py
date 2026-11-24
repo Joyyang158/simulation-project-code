@@ -178,6 +178,25 @@ def update_service_definition(s, reference):
     durations=np.asarray([float(r['service']) for r in reference])
     mean=float(durations.mean())
     days=len({r['date'] for r in reference})
+    counts={d:sum(r['date']==d for r in reference) for d in {r['date'] for r in reference}}
+    terminal_counts=[sum(r['terminal']==t for r in reference) for t in ['T4','T5','T8']]
+    sampled=read(MAIN/'bts/replications.csv')
+    sampled_mean=np.mean([float(r['n_flights']) for r in sampled if r['scenario']=='network_no_sharing'])
+    start=s.index('T4/DL, T5/B6, and T8/AA contain')
+    end=s.index('\n',start)
+    s=s[:start]+(f'T4/DL, T5/B6, and T8/AA contain {terminal_counts[0]:,}, {terminal_counts[1]:,}, and {terminal_counts[2]:,} reference visits, respectively; '
+        f'their average daily counts are {terminal_counts[0]/days:.2f}, {terminal_counts[1]/days:.2f}, and {terminal_counts[2]/days:.2f}. '
+        f'Network demand averages {len(reference)/days:.2f} flights per reference day (range {min(counts.values())}--{max(counts.values())}); '
+        f'the common 100-day bootstrap realization averages {sampled_mean:.2f}.')+s[end:]
+    s=s.replace('3,877',f'{len(reference):,}').replace('between 72 and 147',f'between {min(counts.values())} and {max(counts.values())}')
+    s=s.replace('This part uses observed gate-request times from the screened BTS sample and by-airline empirical service resampling.',
+        "This part uses observed arrival times and each flight's own matched service duration from the screened BTS sample. The complete selected day is replayed without independently resampling services.")
+    s=s.replace('gate-request time is defined as its reconstructed gate-arrival time minus reported taxi-in time plus an assumed 10-minute base taxi time.',
+        r'gate-request time is defined as its reconstructed gate-arrival time minus reported taxi-in time: $a_i=t_{i,\mathrm{gate\ arrival}}-\mathrm{TaxiIn}_i$. The previous 10-minute allowance is removed. This gives a touchdown-time proxy; taxi traversal is not a separate modeled stage.')
+    s=s.replace("Accordingly, we report a by-airline empirical-resampling baseline and a second mode that replays each selected day's observed service values together with its arrivals.",
+        "Accordingly, the main baseline replays each selected day's observed service values together with its arrivals. By-airline empirical service resampling is retained only as a sensitivity comparison.")
+    s=s.replace("Each service is sampled independently from the corresponding airline's full July pool. This baseline preserves observed arrival clustering but removes service ordering within the day. An additional observed-day replay preserves each sampled day's original services and arrivals together.",
+        "Each flight retains its own matched gate-departure-minus-gate-arrival service duration. Thus the main baseline preserves observed arrival clustering and the within-day association of arrivals and services. Across the 100 replications, dates are sampled with replacement from the 31 observed dates; services are not reassigned. A separate sensitivity samples services independently from the corresponding airline's full July pool.")
     loads={t:sum(float(r['service']) for r in reference if r['terminal']==t)/(days*4*1440)
            for t in ['T4','T5','T8']}
     s=s.replace('105.6724',f'{mean:.4f}').replace('105.67',f'{mean:.2f}').replace('52.84',f'{mean/2:.2f}')
@@ -198,6 +217,11 @@ def update_service_definition(s, reference):
                 lines[i]=f'{airline} & {terminal} & {len(values):,} & {values.mean():.2f} & {values.std(ddof=1)/values.mean():.3f} & {loads[terminal]:.3f} '+r'\\'
     s='\n'.join(lines)+'\n'
     fits=json.loads((ROOT/'results/inputs_current/input_fit.json').read_text())
+    ntrain=sum(r['date'] in fits['training_dates'] for r in reference)
+    nhold=sum(r['date'] in fits['holdout_dates'] for r in reference)
+    s=s.replace('3,024 observations',f'{ntrain:,} observations').replace('853 holdout observations',f'{nhold:,} holdout observations')
+    correlations=[r['lag1'] for r in fits['daily_lag1']]
+    s=s.replace('$-0.053$ to $0.641$',f'${min(correlations):.3f}$ to ${max(correlations):.3f}$')
     best=min(fits['fits'],key=lambda f:f['aic'])['distribution']
     labels={'lognorm':'Lognormal','gamma':'Gamma','expon':'Exponential'}
     s=s.replace('Lognormal has the lowest training AIC',labels[best]+' has the lowest training AIC')
@@ -219,6 +243,15 @@ def main():
     a=read(MAIN/'synthetic/replications.csv');b=read(MAIN/'bts/replications.csv')
     assert len(a)==len(b)==2800
     reference=read(ROOT/'data/processed/jfk_2025_07.csv')
+    provenance=json.loads((ROOT/'data/processed/bts_provenance.json').read_text())
+    assert provenance['cleaning_audit']['baseline_taxi']==0
+    assert provenance['cleaning_audit']['clearance']==0
+    assert json.loads((MAIN/'bts/metadata.json').read_text())['config']['service_mode']=='observed_day'
+    originals={r['id']:r for r in reference}
+    for row in read(MAIN/'bts/flight_records/network_no_sharing.csv'):
+        original=originals[row['id']]
+        assert float(row['arrival'])==float(original['arrival'])
+        assert float(row['service'])==float(original['service'])
     source_hash=hashlib.sha256((ROOT/'data/processed/jfk_2025_07.csv').read_bytes()).hexdigest()
     for row in reference:
         elapsed=(datetime.fromisoformat(row['next_gate_departure_utc'])-datetime.fromisoformat(row['actual_gate_arrival_utc'])).total_seconds()/60
@@ -228,7 +261,7 @@ def main():
     for x,y in zip(a,b):
         assert (x['scenario'],x['sampled_date'],x['n_flights'])==(y['scenario'],y['sampled_date'],y['n_flights'])
         if x['scenario']=='network_no_sharing':assert float(x['n_flights'])==counts[x['sampled_date']]
-    for mode in ['synthetic','bts','bts_observed']:
+    for mode in ['synthetic','bts','bts_resampled']:
         m=json.loads((MAIN/mode/'metadata.json').read_text())
         assert m['input_sha256']==source_hash
         assert m['config']['gates_per_terminal']==4 and m['config']['demand_multiplier']==1
@@ -251,7 +284,8 @@ def main():
     validation_rows=read(validation/'mm1_validation.csv')
     assert validation_meta['replications']==100 and all(int(r['n'])==100 for r in validation_rows)
     shutil.copytree(validation,REPORT/'results_validation',dirs_exist_ok=True)
-    shutil.copytree(MAIN,REPORT/'results_main',dirs_exist_ok=True)
+    for mode in ['synthetic','bts','bts_resampled']:
+        shutil.copytree(MAIN/mode,REPORT/'results_main'/mode,dirs_exist_ok=True)
     shutil.copytree(SCALING,REPORT/'results_scaling',dirs_exist_ok=True)
     inputs=REPORT/'results_inputs'
     shutil.copytree(ROOT/'results/inputs_current',inputs,dirs_exist_ok=True)
@@ -275,24 +309,24 @@ def main():
     s=s.replace('Offered load, 20 gates','Offered load, 4 gates').replace('& 0.083','& 0.413').replace('& 0.204','& 1.019').replace('& 0.173','& 0.863')
     s=s.replace('20-gate scenarios','four-gate scenarios').replace('Seventeen automated tests pass','Twenty automated tests pass')
     abstract=(f'We compare calibrated synthetic inputs and BTS-derived inputs under aligned original-demand settings: three terminals with four assumed gates each, two per terminal supporting cross-terminal sharing. '
-        'The reference sample contains 3,877 screened JFK domestic turnarounds over 31 days in July 2025. Synthetic inputs preserve the sampled daily counts by airline and match empirical service means and variances; the BTS baseline uses observed request times and by-airline empirical service resampling. No demand multiplication is used. '
+        f'The reference sample contains {len(reference):,} screened JFK domestic turnarounds over 31 days in July 2025. Synthetic inputs preserve the sampled daily counts by airline and match empirical service means and variances; the BTS baseline retains each selected flight\'s observed arrival and matched service duration. Arrival is gate arrival minus TaxiIn, with no added taxi allowance. No demand multiplication is used. '
         f'Over 100 replications, zero-transfer sharing changes mean network waiting from {val("synthetic","network_no_sharing"):.2f} to {val("synthetic","network_sharing_0"):.2f} minutes with synthetic inputs and from {val("bts","network_no_sharing"):.2f} to {val("bts","network_sharing_0"):.2f} minutes with BTS-derived inputs. '
         'A separate final synthetic experiment crosses 1--5 terminals with 1, 5, 10, 20, and 50 gates per terminal, holding expected demand per terminal fixed. Capacities and gate occupancy remain modeling assumptions; simulated waiting is not measured JFK delay.\n\n'+r'\textbf{Keywords:} discrete-event simulation; gate queues; BTS; common random numbers; synthetic scaling.'+'\n')
     s=replace_section(s,r'\section*{Abstract}',r'\section*{Common experimental settings}',abstract)
     s=replace_section(s,r'\section*{I.5\quad Results and interpretation}',r'\section*{I.6\quad Discussion}',results('synthetic'))
     s=replace_section(s,r'\section*{I.6\quad Discussion}',r'\clearpage',discussion('synthetic'))
     s=replace_section(s,r'\section*{II.4\quad Results}',r'\section*{II.5\quad Interpretation and limitations}',results('bts'))
-    observed=table(['Policy','Resampling','Observed-day replay',r'Replay 95\% CI'],[[label,f'{val("bts",key):.2f}',f'{val("bts_observed",key):.2f}',interval(stat('bts_observed',key))]
+    observed=table(['Policy','Observed baseline','Resampling',r'Resampling 95\% CI'],[[label,f'{val("bts",key):.2f}',f'{val("bts_resampled",key):.2f}',interval(stat('bts_resampled',key))]
         for label,key in [('T4 pooled','terminal_pooled'),('T5 pooled','terminal_T5_pooled'),('T8 pooled','terminal_T8_pooled'),('No sharing','network_no_sharing'),('Sharing, 0 min','network_sharing_0'),('Sharing, 40 min','network_sharing_40')]],
-        'Sensitivity to service dependence at the original flight counts and four gates per terminal. Replay preserves each sampled day\'s original services and requests.')
+        'Service-resampling sensitivity at the original flight counts and four gates per terminal. The main baseline preserves each sampled day\'s original services and requests; only the sensitivity reassigns service values within airlines.')
     limitations=r'''
-The original-data study uses only retained observed flights, with no added copies. The empirical-resampling baseline still generates service assignments from real service samples; observed-day replay retains the original matched service values. Both use turnaround proxies rather than measured gate occupancy. There are no observed gate identifiers or complete gate trajectories. Tail-matched stays may include towing, and selected domestic carriers and same-day screening omit traffic. Capacities and compatibility are assumptions. Thus this case study does not establish actual JFK delays or an optimal airport gate count. Confidence intervals quantify simulation variation conditional on the selected inputs, excluding modeling and screening uncertainty.
+The original-data study uses only retained observed flights, with no added copies. Its main terminal and network experiments preserve each flight's matched service duration; by-airline empirical resampling is a separate sensitivity. Both use turnaround proxies rather than measured gate occupancy. Arrival is now the touchdown-time proxy (gate arrival minus TaxiIn), without a separate taxi-traversal stage. Simulated waiting therefore starts at this proxy and is not an observed gate-waiting measurement. There are no observed gate identifiers or complete gate trajectories. Tail-matched stays may include towing, and selected domestic carriers and same-day screening omit traffic. Capacities and compatibility are assumptions. Thus this case study does not establish actual JFK delays or an optimal airport gate count. Confidence intervals quantify simulation variation conditional on the selected inputs, excluding modeling and screening uncertainty.
 '''
     s=replace_section(s,r'\section*{II.5\quad Interpretation and limitations}',r'\section*{II.6\quad Conclusion and reproducibility}',discussion('bts')+observed+limitations)
     conclusion=r'''
 The main synthetic and BTS studies use the same original demand counts, service moments, terminal mapping, and four-gate capacity. Sharing and pooling are evaluated with paired inputs under these aligned assumptions. The following final experiment studies capacity and network size with separate, fully synthetic traffic; it does not expand the BTS records.
 
-The \texttt{main\_synthetic\_4.json}, \texttt{main\_bts\_4.json}, and \texttt{main\_bts\_observed\_4.json} configurations reproduce the main studies with 100 replications and seed 553. The report's \texttt{results\_main} directory stores results, metadata, figures, and first-replication traces. Original cleaned data and provenance remain in \texttt{results\_aligned}. Superseded demand-expansion results are archived separately and are not part of the current main analysis.
+The \texttt{main\_synthetic\_4.json}, \texttt{main\_bts\_4.json}, and \texttt{main\_bts\_resampled\_4.json} configurations reproduce the synthetic study, observed-service BTS baseline, and resampling sensitivity with 100 replications and seed 553. The report's \texttt{results\_main} directory stores results, metadata, figures, and first-replication traces. Original cleaned data and provenance remain in \texttt{results\_aligned}. Superseded demand-expansion results are archived separately and are not part of the current main analysis.
 '''
     s=replace_section(s,r'\section*{II.6\quad Conclusion and reproducibility}',r'\begin{thebibliography}{9}',conclusion)
     s=update_service_definition(s,reference)
@@ -300,7 +334,7 @@ The \texttt{main\_synthetic\_4.json}, \texttt{main\_bts\_4.json}, and \texttt{ma
     s=s.replace('Twenty automated tests pass','Twenty-one automated tests pass')
     replication_table=table(['Experiment','Independent replications'],[
         ['Calibrated synthetic main study','100 per policy'],['BTS main study','100 per policy'],
-        ['Observed-day sensitivity','100 per policy'],['Synthetic scaling grid','100 per configuration/policy'],
+        ['Service-resampling sensitivity','100 per policy'],['Synthetic scaling grid','100 per configuration/policy'],
         [r'$M/M/1$ verification',r'100 per $\rho$']],
         'All current experiments use 100 independent replications per condition.')
     s=s.replace(r'\part*{Part I: Calibrated Synthetic Experiments}',replication_table+r'\part*{Part I: Calibrated Synthetic Experiments}')

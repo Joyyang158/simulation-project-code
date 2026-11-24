@@ -81,7 +81,7 @@ ALIASES = {
 
 
 def clean_bts(raw_path, timezone_path, terminal_path, airport, output,
-              baseline_taxi=10.0, clearance=0.0, max_stay=360.0):
+              baseline_taxi=0.0, clearance=0.0, max_stay=360.0):
     """Use scheduled local departure + delay, UTC elapsed time, then destination TZ.
 
     Requires domestic raw records for all observed legs of each tail, including

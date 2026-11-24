@@ -10,7 +10,7 @@
     "retained_visits": 4116
   },
   "airport": "JFK",
-  "baseline_taxi": 10.0,
+  "baseline_taxi": 0.0,
   "clearance": 0.0,
   "max_stay": 360.0,
   "limitations": [

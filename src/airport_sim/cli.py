@@ -25,7 +25,7 @@ def main():
     clean.add_argument("--terminals", required=True, help="CSV: airline,terminal")
     clean.add_argument("--airport", default="JFK")
     clean.add_argument("--output", default="data/processed/visits.csv")
-    clean.add_argument("--baseline-taxi", type=float, default=10)
+    clean.add_argument("--baseline-taxi", type=float, default=0)
     clean.add_argument("--clearance", type=float, default=0)
     clean.add_argument("--max-stay", type=float, default=360)
     diagnose = sub.add_parser("diagnose", help="Ch. 5 input fit and diagnostic figures")

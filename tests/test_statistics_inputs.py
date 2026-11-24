@@ -52,7 +52,7 @@ class BTSAdapterTests(unittest.TestCase):
             self.assertEqual(audit["counts"]["duplicates"], 1)
             visits = load_days(p / "visits.csv")
             f = visits["2025-01-02"][0]
-            self.assertEqual(f.arrival, 415)  # 07:00 - 15 + assumed 10 min.
+            self.assertEqual(f.arrival, 405)  # Gate arrival 07:00 minus 15 minutes TaxiIn.
             self.assertEqual(f.service, 60)  # Actual departure 08:00 minus arrival 07:00.
             self.assertEqual(audit["clearance"], 0)
             from datetime import datetime

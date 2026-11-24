@@ -18,7 +18,7 @@
   "closure_duration": 120,
   "smoothing": 0.5,
   "initial_busy_until": 0,
-  "service_mode": "resample_by_airline",
+  "service_mode": "observed_day",
   "input_mode": "empirical",
   "demand_multiplier": 1
 }
