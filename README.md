@@ -4,7 +4,7 @@
 
 主报告保留两个 part：校准合成输入与 BTS 原始需求案例。两版均为 **T4/DL、T5/B6、T8/AA，每航站楼 4 个 gate，其中 2 个支持跨航站楼共享，共 12 个 gate**。均使用 seed=553、100 次重复、1440 分钟观察窗口并在日末排空。真实样本为 **3,875 条、31 天，平均 125.00 航班/日**；主实验 `demand_multiplier=1`，没有复制扩增航班。
 
-合成版保持抽中日期各航司的实际航班数，使用航司半小时到达直方图和匹配经验均值/总体方差的 Gamma 服务。BTS baseline 使用 `observed_day`：保留抽中日期每架飞机自己的真实匹配 service time，不再重抽服务值。Arrival = 实际 gate 到达时间 − TaxiIn，额外的 10 分钟已删除；service = 同一飞机下一次实际 gate 离开时间 − 本次实际 gate 到达时间。原来的按航司 resampling 仅作为敏感性对照。两版容量、航班数、航司映射和服务分布矩对齐，不要求到达依赖结构、服务尾部及有限样本值完全一样。单 gate setting 始终为 1 个 gate，均值 100.6222 分钟和相同 Poisson 负荷。
+合成版保持抽中日期各航司的实际航班数，使用航司半小时到达直方图和匹配经验均值/总体方差的 Gamma 服务。BTS baseline 使用 `observed_day`：保留抽中日期每架飞机自己的真实匹配 service time，不再重抽服务值。Arrival = 实际 gate 到达时间 − TaxiIn，额外的 10 分钟已删除；service = 同一飞机下一次实际 gate 离开时间 − 本次实际 gate 到达时间。原来的按航司 resampling 仅作为敏感性对照。两版容量、航班数、航司映射和服务分布矩对齐，不要求到达依赖结构、服务尾部及有限样本值完全一样。单 gate setting 对 T4、T5、T8 分别运行，每个用 1 个 gate 承担该航站楼抽中日期的全部入选航班。BTS baseline 直接保留每架飞机的 arrival 和 service；synthetic 使用相同日期、航班数及航司映射，按半小时曲线和 Gamma 分布生成时间。不再固定四档负荷，也不另外生成 Poisson 到达。
 
 ```bash
 python scripts/prepare_bts.py
@@ -25,13 +25,15 @@ cp build/report/report.pdf report.pdf
 
 ## 单航站楼结果：T4、T5、T8 分别运行
 
-Single-terminal setting 对 T4/DL、T5/B6、T8/AA 分别运行，每个只使用自己的航班和 4 个本航站楼 gate，不跨楼借用。每个航站楼分别比较 dedicated、pooled、smoothed，并保留独立输入的 pooled comparator 做 CRN 方差对比，各 100 次。当前每种输入模式共 28 个场景、2,800 条逐次结果。
+Single-terminal setting 对 T4/DL、T5/B6、T8/AA 分别运行，每个只使用自己的航班和 4 个本航站楼 gate，不跨楼借用。每个航站楼分别比较 dedicated、pooled、smoothed，并保留独立输入的 pooled comparator 做 CRN 方差对比，各 100 次。当前每种输入模式共 26 个场景、2,600 条逐次结果。
 
 为保持原结果兼容，T4 仍使用 `terminal_dedicated/pooled/smoothed/pooled_independent` 名称；新增 `terminal_T5_*` 和 `terminal_T8_*`。完整映射在 `metadata.json` 的 `terminal_scenarios`，各航站楼 CRN 统计在 `crn_by_terminal`。图表 `all_terminal_policies.pdf` 展示三个本地实验；旧 overview 中的 reference terminal 仍为 T4，不能代表全部航站楼。
 
+正式 single-gate 基准使用 `single_T4_base`、`single_T5_base`、`single_T8_base`，低方差对照对应 `_low_variability`。每个条件 100 次，与四 gate 实验共享该航站楼的基准输入。单 gate 日均 offered load 超过 1，所有队列在日末后继续排空，因此等待是有限日压力结果，不能当成稳态等待。旧 Poisson 模式仍可用于独立演示；当前主报告已不使用它。
+
 ## 两类不同的方差实验
 
-1. **Service time 波动减少**：单 gate 实验使用 `S_low = mean + 0.5*(S-mean)`，保持总体均值、把服务方差降到四分之一。这改变输入分布，用于观察等待时间的变化。
+1. **Service time 波动减少**：单 gate 实验使用 `S_low = mean + 0.5*(S-mean)`，其中 mean 是该航站楼当天的服务均值，保持当天均值与总工作量、把当天服务方差降到四分之一。这改变输入分布，用于观察等待时间的变化。
 2. **CRN 统计方差缩减**：比较 T4 pooling 与 dedicated 的平均等待差，使用相同输入配对与独立输入两种采样设计，各 100 次。CRN 保持各政策边际输入模型，降低的是政策差估计的不确定性。
 
 当前合成版 independent/CRN 样本方差比为 58.34，BTS 版为 35.38；这是当前模型下的样本估计，不是保证的效率倍数。报告生成器从逐次结果重新计算方差、均值估计方差及 95% CI，并核对 `metadata.json`。两部分均含 CRN 对比表；可复核的数据位于 `report/results_main/{synthetic,bts}/crn_comparison.csv`。
@@ -105,12 +107,12 @@ python -m unittest discover -s tests -v
 - 利用率分母为总机位数乘观察窗口，关闭区间仍包含在分母中；`reserved_utilization` 额外包含转移预留。两者都包含初始占用。
 - 纯排队队长不包含转移中的飞机。`mean_queue` 是时间积分除观察窗口，并非事件时刻队长的简单平均。
 
-## 三组实验
+## 演示配置的三组实验（正式实验使用上文 main 配置）
 
 `configs/demo.json` 控制参数；也可用 `--config 自己的配置.json` 覆盖其中一部分，未知字段会报错。
 
 1. **单机位：** 负荷 0.50、0.70、0.85、0.95，Poisson 到达。无真实数据时服务为均值 45 分钟的指数分布；提供数据时对服务样本做经验抽样。比较原服务与 `S_low = mean + 0.5*(S-mean)`：总体均值不变，方差降到四分之一。同一重复使用相同到达和基础服务抽样。这组是空系统启动的有限日实验，不能直接套稳态公式解释结果。
-2. **单航站楼：** 选择配置中按名称排序的第一个航站楼，比较 dedicated、pooled、pooled 加高峰平滑。平滑将到达时刻向等间隔时刻移动，保留飞机、顺序、服务输入和日总量；额外输出平均绝对时刻调整量。
+2. **单航站楼：** 分别运行每个航站楼，比较 dedicated、pooled、pooled 加高峰平滑。平滑将到达时刻向等间隔时刻移动，保留飞机、顺序、服务输入和日总量；额外输出平均绝对时刻调整量。
 3. **多航站楼：** 比较不共享与 0、10、20、40 分钟转移时间的共享；另比较首个机位关闭、初始占用敏感性。默认两个抽象航站楼各四个机位，每楼两个机位兼容全部航司，另外两个只服务本楼航司。所有策略比较保持需求与容量相同。
 
 无真实数据时，每天 200 架次，65% 归 T1，35% 归 T2。每楼 65% 的到达集中于各自高峰，其他在日内较宽窗口均匀分布。多机位服务为 Erlang(4)，平均 45 分钟。该设置故意形成拥堵以展示策略差异。
@@ -257,7 +259,7 @@ python scripts/run_main.py
 主实验配置为 `configs/main_bts_4.json`，使用 `service_mode=observed_day`，完整保留抽中日期每架飞机的到达时间与服务值；输出为 `results/main/bts`。
 敏感性配置为 `configs/main_bts_resampled_4.json`，使用 `service_mode=resample_by_airline` 在航司内独立经验抽样；输出为 `results/main/bts_resampled`。
 两者均整天抽样、使用同一套 12 个假设机位（T4、T5、T8 各 4 个）及 CRN 配对。
-单机位部分仍使用合成 Poisson 到达和汇总经验服务，不是机场实际单机位需求回放。
+单机位部分使用 `single_input_mode=sampled_day`，分别让一个 gate 承担 T4、T5、T8 当天的入选航班。BTS baseline 不重抽 arrival 或 service；低方差对照是人为修改的服务时间。由于没有实际 gate 编号，这仍是单 gate 容量压力实验，而非实际某个 gate 的运行回放。
 落地时间代理不含独立滑行阶段，因此模拟等待不是观测到的实际 gate 等待时间。
 旧的 `main_bts_observed_4.json` 保留为兼容配置，当前主结果已采用同一 observed-day 方法。
 

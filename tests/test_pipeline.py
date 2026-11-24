@@ -71,7 +71,7 @@ class PipelineTests(unittest.TestCase):
             flights = synthetic_day(3, 0, count=12)
             write_csv(root / "visits.csv", [dict(date="2025-07-01", id=f.id,
                 arrival=f.arrival, service=f.service, terminal=f.terminal, airline=f.airline) for f in flights])
-            (root / "config.json").write_text(json.dumps(dict(service_mode="observed_day")))
+            (root / "config.json").write_text(json.dumps(dict(service_mode="observed_day", single_input_mode="sampled_day")))
             with contextlib.redirect_stdout(io.StringIO()):
                 metadata = run_experiments(root / "output", replications=2,
                     config_path=root / "config.json", data_path=root / "visits.csv")
@@ -79,6 +79,19 @@ class PipelineTests(unittest.TestCase):
             records = read_csv(root / "output/flight_records/network_no_sharing.csv")
             self.assertEqual({r["id"]: float(r["service"]) for r in records}, original)
             self.assertIn("Observed day", metadata["service_sampling"])
+            import numpy as np
+            for terminal in {f.terminal for f in flights}:
+                baseline = read_csv(root / f"output/flight_records/single_{terminal}_base.csv")
+                reduced = read_csv(root / f"output/flight_records/single_{terminal}_low_variability.csv")
+                expected = {f.id: (f.arrival, f.service) for f in flights if f.terminal == terminal}
+                self.assertEqual({r['id']: (float(r['arrival']), float(r['service'])) for r in baseline}, expected)
+                self.assertEqual({r['id']: float(r['arrival']) for r in reduced}, {k: v[0] for k,v in expected.items()})
+                original_services = np.array([float(r['service']) for r in baseline])
+                reduced_services = np.array([float(r['service']) for r in reduced])
+                self.assertAlmostEqual(original_services.mean(), reduced_services.mean())
+                self.assertAlmostEqual(original_services.var()/4, reduced_services.var())
+            scenarios = {r['scenario'] for r in read_csv(root / 'output/replications.csv')}
+            self.assertNotIn('single_0.5_base', scenarios)
 
 
 if __name__ == "__main__":

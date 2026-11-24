@@ -83,7 +83,7 @@ For T4 pooled-minus-dedicated mean waiting, we compare two sampling designs with
         [r['terminal'],f"{r['crn_variance']:.2f}",f"{r['independent_variance']:.2f}",f"{r['ratio']:.2f}" if r['ratio'] is not None else 'Undefined'] for r in comparisons],
         'CRN comparison for each terminal: pooled-minus-dedicated mean waiting, 100 replications. Ratios are independent variance divided by CRN variance.')
     text+=r'''\textbf{Distinction from lower service variability.}
-The single-gate intervention $S'=m+0.5(S-m)$ changes the modeled service distribution, preserving its population mean and reducing its variance to one quarter. It can change actual simulated waiting. CRN instead changes how two policy runs are coupled; it preserves each policy's marginal input model and aims to estimate their difference more precisely. These are separate experiments, and both are retained in this report.
+The single-gate intervention $S'_i=\bar S_{d,t}+0.5(S_i-\bar S_{d,t})$ uses the selected day's mean service for that terminal. It preserves that day's mean and total service demand and reduces within-day service variance to one quarter. These adjusted services are a constructed intervention, not observed durations. CRN instead changes how two policy runs are coupled; it preserves each policy's marginal input model and aims to estimate their difference more precisely. These are separate experiments.
 '''
     return text
 
@@ -122,11 +122,12 @@ def results(mode):
     text+=all_terminal_section(mode)
     pairs=read(MAIN/mode/'paired_differences.csv')
     data=[]
-    for rho in [.5,.7,.85,.95]:
-        a=f'single_{rho:g}_base';b=f'single_{rho:g}_low_variability'
+    for terminal in ['T4','T5','T8']:
+        a=f'single_{terminal}_base';b=f'single_{terminal}_low_variability'
         d=next(r for r in pairs if r['alternative']==b and r['metric']=='mean_wait')
-        data.append([f'{rho:.2f}',f'{val(mode,a):.2f}',f'{val(mode,b):.2f}',f"{float(d['mean']):.2f}",interval(d)])
-    text+=table([r'$\rho$','Original','Lower variability','Difference',r'95\% paired CI'],data,'Single-gate mean waiting in minutes. This setting always uses one gate.')
+        data.append([terminal,f'{val(mode,a):.2f}',f'{val(mode,b):.2f}',f"{float(d['mean']):.2f}",interval(d)])
+    text+=table(['Terminal demand','Original','Lower variability','Difference',r'95\% paired CI'],data,'One gate serves each terminal\'s sampled-day demand separately, with 100 replications. Mean waiting is in minutes and includes post-day drainage. Lower-variability services are a constructed intervention.')
+    text+='The single-gate and four-gate experiments use identical baseline flights within each terminal and replication. The single-gate case concentrates the selected terminal demand onto one server; it is not a reconstruction of an observed gate. Long waits reflect this capacity stress, not measured airport delays.\n'
     text+=figure(f'results_main/{mode}/policy_differences.pdf','Paired policy differences: alternative minus baseline, mean waiting in minutes.','.66')
     text+=crn_section(mode)
     return text
@@ -140,7 +141,7 @@ def discussion(mode):
         f'T4 pooling gives {val(mode,"terminal_pooled"):.2f} minutes; smoothing gives {val(mode,"terminal_smoothed"):.2f} minutes. '
         'Terminal imbalance and time-of-day peaks cause congestion even when average network offered load is below one. '
         'These finite-day results include queue draining after the observation horizon and do not establish steady-state stability.\n\n'
-        'The single-gate variability reduction improves mean waiting at each tested load. Policy comparisons share pre-generated flights within a replication. '
+        'The single-gate experiment now serves the sampled terminal-day flights on one gate, with no artificial Poisson arrival process or fixed load grid. Its lower-variability intervention preserves daily total work; its effect depends on service ordering and the finite-day queue. Policy comparisons share pre-generated flights within a replication. '
         'The transfer-time grid does not establish a break-even point beyond the tested range.\n')
 
 
@@ -238,20 +239,45 @@ def update_service_definition(s, reference):
     return s
 
 
+def update_single_gate_definition(s, reference):
+    s=s.replace('The single-gate arrival process uses inverse-transform exponential interarrival times. Synthetic services use the inverse Gamma CDF, and empirical services use inverse empirical sampling.',
+        'The separate stationary $M/M/1$ verification uses inverse-transform exponential interarrival times. In the main case studies, synthetic arrivals use half-hour composition sampling and services use the inverse Gamma CDF; the BTS baseline replays observed arrival-service pairs. Empirical service sampling appears only in the labeled resampling sensitivity.')
+    s=s.replace(r'1: Single gate & 1 & 1 & Poisson, $\rho=0.50,0.70,0.85,0.95$',
+                '1: Single gate & T4, T5, T8 separately & 1 each & Respective local flights')
+    start=s.index('The separate single-gate experiment uses the pooled service mean')
+    end=s.index(r'\section*{I.2',start)
+    days=len({r['date'] for r in reference})
+    loads=[sum(float(r['service']) for r in reference if r['terminal']==t)/(days*1440) for t in ['T4','T5','T8']]
+    paragraph=r'''The single-gate experiment uses the same sampled date and local flights as the four-gate experiment, but supplies only one gate to each terminal in a separate run. Synthetic arrivals follow the airline's half-hour profile, and services use its moment-matched Gamma distribution. There is no separate Poisson arrival process and no fixed utilization grid. BTS uses the corresponding observed-day flights in Part II. The one-gate cases are finite-day capacity stress experiments, not reconstructions of individual real gates. All queues drain after the 1,440-minute observation window.
+
+For the lower-variability sensitivity, let $\bar S_{d,t}$ be the mean service among that day's flights at terminal $t$, and set $S'_i=\bar S_{d,t}+0.5(S_i-\bar S_{d,t})$. This keeps flight counts, arrival times, daily mean service, and total work unchanged, while quartering within-day service variance. Only the unmodified BTS baseline uses observed service durations; the sensitivity deliberately changes them.
+
+'''
+    paragraph+=f'The reference mean daily offered loads with one gate are {loads[0]:.2f}, {loads[1]:.2f}, and {loads[2]:.2f} for T4, T5, and T8. All exceed one, so the experiment measures finite-day backlog and post-day drainage, not stationary waiting.\n'
+    s=s[:start]+paragraph+s[end:]
+    start=s.index('For the separate single-gate study, Poisson arrivals')
+    end=s.index(r'\section*{II.4',start)
+    s=s[:start]+r'''For the single-gate baseline, each selected day's T4, T5, and T8 flights are run separately on one local gate. Each flight retains its actual arrival proxy (gate arrival minus TaxiIn) and its own matched gate turnaround. No arrival times or baseline services are independently resampled. The synthetic counterpart uses the same sampled dates and terminal-specific flight counts. Dates are sampled with replacement for 100 replications. The lower-variability intervention changes only service durations around each terminal-day mean; the separate service-resampling sensitivity remains explicitly labeled.
+
+'''+s[end:]
+    return s
+
+
 def main():
     # Audit original demand and alignment before changing report outputs.
     a=read(MAIN/'synthetic/replications.csv');b=read(MAIN/'bts/replications.csv')
-    assert len(a)==len(b)==2800
+    assert len(a)==len(b)==2600
     reference=read(ROOT/'data/processed/jfk_2025_07.csv')
     provenance=json.loads((ROOT/'data/processed/bts_provenance.json').read_text())
     assert provenance['cleaning_audit']['baseline_taxi']==0
     assert provenance['cleaning_audit']['clearance']==0
     assert json.loads((MAIN/'bts/metadata.json').read_text())['config']['service_mode']=='observed_day'
     originals={r['id']:r for r in reference}
-    for row in read(MAIN/'bts/flight_records/network_no_sharing.csv'):
-        original=originals[row['id']]
-        assert float(row['arrival'])==float(original['arrival'])
-        assert float(row['service'])==float(original['service'])
+    for scenario in ['network_no_sharing']+[f'single_{t}_base' for t in ['T4','T5','T8']]:
+        for row in read(MAIN/f'bts/flight_records/{scenario}.csv'):
+            original=originals[row['id']]
+            assert float(row['arrival'])==float(original['arrival'])
+            assert float(row['service'])==float(original['service'])
     source_hash=hashlib.sha256((ROOT/'data/processed/jfk_2025_07.csv').read_bytes()).hexdigest()
     for row in reference:
         elapsed=(datetime.fromisoformat(row['next_gate_departure_utc'])-datetime.fromisoformat(row['actual_gate_arrival_utc'])).total_seconds()/60
@@ -265,6 +291,7 @@ def main():
         m=json.loads((MAIN/mode/'metadata.json').read_text())
         assert m['input_sha256']==source_hash
         assert m['config']['gates_per_terminal']==4 and m['config']['demand_multiplier']==1
+        assert m['config']['single_input_mode']=='sampled_day'
         assert m['replications']==100 and len(m['gates'])==12
         actual=read(MAIN/mode/'replications.csv')
         for scenario in {r['scenario'] for r in actual}:
@@ -286,6 +313,9 @@ def main():
     shutil.copytree(validation,REPORT/'results_validation',dirs_exist_ok=True)
     for mode in ['synthetic','bts','bts_resampled']:
         shutil.copytree(MAIN/mode,REPORT/'results_main'/mode,dirs_exist_ok=True)
+        for folder in [MAIN/mode/'flight_records',REPORT/'results_main'/mode/'flight_records']:
+            for old in folder.glob('single_0.*.csv'):
+                old.unlink()
     shutil.copytree(SCALING,REPORT/'results_scaling',dirs_exist_ok=True)
     inputs=REPORT/'results_inputs'
     shutil.copytree(ROOT/'results/inputs_current',inputs,dirs_exist_ok=True)
@@ -330,6 +360,7 @@ The \texttt{main\_synthetic\_4.json}, \texttt{main\_bts\_4.json}, and \texttt{ma
 '''
     s=replace_section(s,r'\section*{II.6\quad Conclusion and reproducibility}',r'\begin{thebibliography}{9}',conclusion)
     s=update_service_definition(s,reference)
+    s=update_single_gate_definition(s,reference)
     s=s.replace('2: Single terminal & T4 & 4 & DL flights on sampled date', '2: Single terminal & T4, T5, T8 separately & 4 each & Respective local flights')
     s=s.replace('Twenty automated tests pass','Twenty-one automated tests pass')
     replication_table=table(['Experiment','Independent replications'],[

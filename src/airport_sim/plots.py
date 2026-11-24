@@ -35,11 +35,18 @@ def experiment_plots(summary, differences, cfg, output, synthetic):
         label += f"; {cfg['demand_multiplier']}x constructed demand"
     lookup = {(r["scenario"], r["metric"]): r for r in summary}
     fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
+    sampled_day = cfg.get("single_input_mode") == "sampled_day"
+    keys = (sorted(r["scenario"][7:-5] for r in summary
+                   if r["scenario"].startswith("single_") and r["scenario"].endswith("_base") and r["metric"] == "mean_wait")
+            if sampled_day else [f"{rho:g}" for rho in cfg["single_loads"]])
+    x = list(range(len(keys))) if sampled_day else cfg["single_loads"]
     for variant, title in (("base", "Original variability"), ("low_variability", "Half the service CV")):
-        rows = [lookup[f"single_{rho:g}_{variant}", "mean_wait"] for rho in cfg["single_loads"]]
-        axes[0].errorbar(cfg["single_loads"], [r["mean"] for r in rows],
+        rows = [lookup[f"single_{key}_{variant}", "mean_wait"] for key in keys]
+        axes[0].errorbar(x, [r["mean"] for r in rows],
                          yerr=[r["ci_high"] - r["mean"] for r in rows], capsize=3, marker="o", label=title)
-    axes[0].set(xlabel="Offered load (rho)", ylabel="Mean wait (minutes)", title="Single gate: finite day, empty start")
+    if sampled_day:
+        axes[0].set_xticks(x, keys)
+    axes[0].set(xlabel="Terminal demand served by one gate" if sampled_day else "Offered load (rho)", ylabel="Mean wait (minutes)", title="Single gate: finite day, empty start")
     axes[0].legend(fontsize=8)
     names = ["terminal_dedicated", "terminal_pooled", "terminal_smoothed"]
     rows = [lookup[name, "mean_wait"] for name in names]

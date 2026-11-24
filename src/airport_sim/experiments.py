@@ -18,7 +18,7 @@ DEFAULT_CONFIG = dict(horizon=1440, flights_per_day=200, mean_service=45,
                       transfer_times=[0, 10, 20, 40], single_loads=[.5, .7, .85, .95],
                       closure_start=480, closure_duration=120, smoothing=.5,
                       initial_busy_until=0, input_mode="empirical", service_mode="resample_by_airline",
-                      demand_multiplier=1)
+                      demand_multiplier=1, single_input_mode="poisson")
 
 
 def configuration(path=None):
@@ -31,6 +31,10 @@ def configuration(path=None):
         cfg.update(given)
     if cfg["input_mode"] not in {"empirical", "calibrated_synthetic"}:
         raise ValueError("Invalid input_mode")
+    if cfg["single_input_mode"] not in {"poisson", "sampled_day"}:
+        raise ValueError("Invalid single_input_mode")
+    if cfg["single_input_mode"] == "sampled_day" and cfg["demand_multiplier"] != 1:
+        raise ValueError("Sampled-day single-gate experiments require original demand")
     if cfg["input_mode"] == "calibrated_synthetic" and cfg["service_mode"] == "observed_day":
         raise ValueError("Synthetic inputs cannot replay observed services")
     if cfg["service_mode"] not in {"resample_by_airline", "observed_day"}:
@@ -104,6 +108,8 @@ def run_experiments(output, replications=100, seed=553, config_path=None, data_p
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     days = load_days(data_path, horizon) if data_path else None
+    if cfg["single_input_mode"] == "sampled_day" and not days:
+        raise ValueError("Sampled-day single-gate experiments require --data")
     calibrated = cfg["input_mode"] == "calibrated_synthetic"
     if calibrated and not days:
         raise ValueError("Calibrated synthetic inputs require --data")
@@ -215,7 +221,15 @@ def run_experiments(output, replications=100, seed=553, config_path=None, data_p
                    [f for f in independent_day if f.terminal == terminal], capacity,
                    input_date="INDEPENDENT_DRAW")
 
-        for rho in cfg["single_loads"]:
+        if cfg["single_input_mode"] == "sampled_day":
+            for terminal in sorted(airlines_by_terminal):
+                demand = [f for f in flights if f.terminal == terminal]
+                center = float(np.mean([f.service for f in demand])) if demand else 0.0
+                reduced = [replace(f, service=center + .5 * (f.service - center)) for f in demand]
+                capacity = [Gate(f"{terminal}-S1", terminal)]
+                record(f"single_{terminal}_base", demand, capacity)
+                record(f"single_{terminal}_low_variability", reduced, capacity)
+        for rho in (cfg["single_loads"] if cfg["single_input_mode"] == "poisson" else []):
             arrival_rng, service_rng, _ = streams(seed + 101, rep)
             times = poisson_arrivals(arrival_rng, rho / single_mean, horizon)
             u = service_rng.random(len(times))
@@ -243,7 +257,9 @@ def run_experiments(output, replications=100, seed=553, config_path=None, data_p
              ("network_no_sharing", "network_closed_gate"),
              ("network_initial_empty", "network_initial_occupied")]
     pairs += [("network_no_sharing", f"network_sharing_{x:g}") for x in cfg["transfer_times"]]
-    pairs += [(f"single_{rho:g}_base", f"single_{rho:g}_low_variability") for rho in cfg["single_loads"]]
+    single_keys = (sorted(airlines_by_terminal) if cfg["single_input_mode"] == "sampled_day"
+                   else [f"{rho:g}" for rho in cfg["single_loads"]])
+    pairs += [(f"single_{key}_base", f"single_{key}_low_variability") for key in single_keys]
     for terminal, names in terminal_scenarios.items():
         if terminal != selected_terminal:
             pairs += [(names["dedicated"], names["pooled"]), (names["pooled"], names["smoothed"])]
@@ -291,7 +307,12 @@ def run_experiments(output, replications=100, seed=553, config_path=None, data_p
                         service_rule="Added flights retain source service in observed_day mode; otherwise all services are sampled by airline"),
                     service_sampling=service_sampling,
                     single_service_mean=single_mean,
-                    single_variability="S_low = mean + 0.5*(S-mean); population mean unchanged, variance quartered",
+                    single_variability=("S_low = daily terminal mean + 0.5*(S-daily terminal mean); daily mean unchanged, within-day variance quartered"
+                                        if cfg["single_input_mode"] == "sampled_day" else
+                                        "S_low = mean + 0.5*(S-mean); population mean unchanged, variance quartered"),
+                    single_input_description=("One gate per terminal separately; same sampled-day flights as terminal/network; baseline retains input arrivals and services"
+                                              if cfg["single_input_mode"] == "sampled_day" else
+                                              "Synthetic Poisson arrivals at controlled loads; independently sampled services"),
                     ci_estimand="Mean replication metric; p95_wait CI estimates mean daily p95, not pooled-flight p95",
                     policy_difference="alternative minus baseline", crn=crn)
     write_csv(output / "replications.csv", rows)
