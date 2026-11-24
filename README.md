@@ -22,6 +22,19 @@ latexmk -pdf -interaction=nonstopmode -halt-on-error -outdir=build/report report
 cp build/report/report.pdf report.pdf
 ```
 
+## 单航站楼结果：T4、T5、T8 分别运行
+
+Single-terminal setting 对 T4/DL、T5/B6、T8/AA 分别运行，每个只使用自己的航班和 4 个本航站楼 gate，不跨楼借用。每个航站楼分别比较 dedicated、pooled、smoothed，并保留独立输入的 pooled comparator 做 CRN 方差对比，各 100 次。当前每种输入模式共 28 个场景、2,800 条逐次结果。
+
+为保持原结果兼容，T4 仍使用 `terminal_dedicated/pooled/smoothed/pooled_independent` 名称；新增 `terminal_T5_*` 和 `terminal_T8_*`。完整映射在 `metadata.json` 的 `terminal_scenarios`，各航站楼 CRN 统计在 `crn_by_terminal`。图表 `all_terminal_policies.pdf` 展示三个本地实验；旧 overview 中的 reference terminal 仍为 T4，不能代表全部航站楼。
+
+## 两类不同的方差实验
+
+1. **Service time 波动减少**：单 gate 实验使用 `S_low = mean + 0.5*(S-mean)`，保持总体均值、把服务方差降到四分之一。这改变输入分布，用于观察等待时间的变化。
+2. **CRN 统计方差缩减**：比较 T4 pooling 与 dedicated 的平均等待差，使用相同输入配对与独立输入两种采样设计，各 100 次。CRN 保持各政策边际输入模型，降低的是政策差估计的不确定性。
+
+当前合成版 independent/CRN 样本方差比为 53.54，BTS 版为 49.44；这是当前模型下的样本估计，不是保证的效率倍数。报告生成器从逐次结果重新计算方差、均值估计方差及 95% CI，并核对 `metadata.json`。两部分均含 CRN 对比表；可复核的数据位于 `report/results_main/{synthetic,bts}/crn_comparison.csv`。
+
 ## 最后的合成数据 scaling 测试
 
 - 航站楼数：**1、2、3、4、5**。

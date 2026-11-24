@@ -45,7 +45,7 @@ def experiment_plots(summary, differences, cfg, output, synthetic):
     rows = [lookup[name, "mean_wait"] for name in names]
     axes[1].bar(["Dedicated", "Pooled", "Smoothed"], [r["mean"] for r in rows],
                 yerr=[r["ci_high"] - r["mean"] for r in rows], capsize=4, color=["#718096", "#2b6cb0", "#2c7a7b"])
-    axes[1].set(ylabel="Mean wait (minutes)", title="One terminal")
+    axes[1].set(ylabel="Mean wait (minutes)", title="Reference terminal")
     rows = [lookup[f"network_sharing_{x:g}", "mean_wait"] for x in cfg["transfer_times"]]
     axes[2].errorbar(cfg["transfer_times"], [r["mean"] for r in rows],
                      yerr=[r["ci_high"] - r["mean"] for r in rows], capsize=4, marker="o", label="Sharing (includes transfer)")
@@ -74,7 +74,7 @@ def input_diagnostics(values, fits, days, train_dates, holdout_dates, output):
     for fit in fits:
         distribution = getattr(stats, fit["distribution"])
         axes[0].plot(x, distribution.pdf(x, *fit["parameters"]), label=fit["distribution"])
-    axes[0].set(xlabel="Service proxy + buffer (minutes)", ylabel="Density", title="Input distribution fits")
+    axes[0].set(xlabel="Service time (minutes)", ylabel="Density", title="Input distribution fits")
     axes[0].legend(fontsize=8)
     best = min(fits, key=lambda r: r["aic"])
     dist = getattr(stats, best["distribution"])
@@ -91,3 +91,17 @@ def input_diagnostics(values, fits, days, train_dates, holdout_dates, output):
     axes[2].set(xlabel="Hour of day", ylabel="Mean arrivals / 30 min", title="Arrival peaks")
     axes[2].legend()
     save(fig, output, "input_diagnostics")
+
+
+def terminal_policy_plots(summary, scenario_map, cfg, output):
+    """Separate local queues: one panel per terminal, identical policy design."""
+    lookup = {(r['scenario'], r['metric']): r for r in summary}
+    fig, axes = plt.subplots(1, len(scenario_map), figsize=(4.2*len(scenario_map), 4), squeeze=False, sharey=True)
+    for ax, (terminal, names) in zip(axes[0], scenario_map.items()):
+        rows = [lookup[names[p], 'mean_wait'] for p in ['dedicated','pooled','smoothed']]
+        ax.bar(['Dedicated','Pooled','Smoothed'], [r['mean'] for r in rows],
+               yerr=[r['ci_high']-r['mean'] for r in rows], capsize=3,
+               color=['#718096','#2b6cb0','#2c7a7b'])
+        ax.set(title=f"{terminal}: {cfg['gates_per_terminal']} gates", ylabel='Mean wait (minutes)')
+    fig.suptitle(f"Separate single-terminal experiments; {rows[0]['n']} replications per policy, 95% CIs")
+    save(fig, output, 'all_terminal_policies')

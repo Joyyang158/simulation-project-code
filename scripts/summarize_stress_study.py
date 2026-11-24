@@ -50,7 +50,8 @@ def main():
         for a,b in zip(runs['synthetic',multiplier],runs['bts',multiplier]):
             assert (a['scenario'],a['sampled_date'],a['n_flights'])==(b['scenario'],b['sampled_date'],b['n_flights'])
     observed=rows(OUT/'bts_20_x5_observed/replications.csv')
-    assert len(observed)==len(runs['bts',5])==2000
+    assert len(observed)==len(runs['bts',5])
+    assert all(sum(r['scenario']==name for r in observed)==100 for name in {r['scenario'] for r in observed})
     for a,b in zip(runs['bts',5],observed):
         assert (a['scenario'],a['sampled_date'],a['n_flights'])==(b['scenario'],b['sampled_date'],b['n_flights'])
         if a['scenario'].startswith('single_'):

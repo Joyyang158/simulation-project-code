@@ -118,6 +118,11 @@ def run_experiments(output, replications=100, seed=553, config_path=None, data_p
     gates = make_gates(airlines_by_terminal, cfg)
     selected_terminal = sorted(airlines_by_terminal)[0]
     local_gates = [g for g in gates if g.terminal == selected_terminal]
+    terminal_scenarios = {
+        terminal: {policy: (f"terminal_{policy}" if terminal == selected_terminal
+                            else f"terminal_{terminal}_{policy}")
+                   for policy in ("dedicated", "pooled", "smoothed", "pooled_independent")}
+        for terminal in sorted(airlines_by_terminal)}
     service_pools = {a: [f.service for f in all_flights if f.airline == a]
                      for a in {f.airline for f in all_flights}}
 
@@ -195,6 +200,21 @@ def run_experiments(output, replications=100, seed=553, config_path=None, data_p
         rows.append(dict(replication=rep, scenario="terminal_pooled_independent", sampled_date="INDEPENDENT_DRAW",
                          mean_schedule_adjustment=0.0, **independent.metrics))
 
+        for terminal, names in terminal_scenarios.items():
+            if terminal == selected_terminal:
+                continue  # Keep the original reference-terminal outputs unchanged.
+            demand = [f for f in flights if f.terminal == terminal]
+            capacity = [g for g in gates if g.terminal == terminal]
+            record(names["dedicated"], demand, capacity, "dedicated")
+            record(names["pooled"], demand, capacity)
+            smoothed = smooth_day(demand, horizon, cfg["smoothing"])
+            old = {f.id: f.arrival for f in demand}
+            adjustment = float(np.mean([abs(f.arrival-old[f.id]) for f in smoothed])) if smoothed else 0
+            record(names["smoothed"], smoothed, capacity, adjustment=adjustment)
+            record(names["pooled_independent"],
+                   [f for f in independent_day if f.terminal == terminal], capacity,
+                   input_date="INDEPENDENT_DRAW")
+
         for rho in cfg["single_loads"]:
             arrival_rng, service_rng, _ = streams(seed + 101, rep)
             times = poisson_arrivals(arrival_rng, rho / single_mean, horizon)
@@ -224,6 +244,9 @@ def run_experiments(output, replications=100, seed=553, config_path=None, data_p
              ("network_initial_empty", "network_initial_occupied")]
     pairs += [("network_no_sharing", f"network_sharing_{x:g}") for x in cfg["transfer_times"]]
     pairs += [(f"single_{rho:g}_base", f"single_{rho:g}_low_variability") for rho in cfg["single_loads"]]
+    for terminal, names in terminal_scenarios.items():
+        if terminal != selected_terminal:
+            pairs += [(names["dedicated"], names["pooled"]), (names["pooled"], names["smoothed"])]
     for baseline, alternative in pairs:
         for metric in metric_names:
             comparisons.append(dict(baseline=baseline, alternative=alternative, metric=metric,
@@ -234,6 +257,13 @@ def run_experiments(output, replications=100, seed=553, config_path=None, data_p
     crn = dict(paired_difference_variance=paired_var, independent_difference_variance=independent_var,
                variance_ratio_independent_over_crn=independent_var / paired_var if paired_var else None,
                note="Empirical variance comparison; CRN is not guaranteed to improve every scenario.")
+    crn_by_terminal = {}
+    for terminal, names in terminal_scenarios.items():
+        baseline = np.asarray(values(names["dedicated"], "mean_wait"))
+        pv = float((np.asarray(values(names["pooled"], "mean_wait"))-baseline).var(ddof=1))
+        iv = float((np.asarray(values(names["pooled_independent"], "mean_wait"))-baseline).var(ddof=1))
+        crn_by_terminal[terminal] = dict(paired_difference_variance=pv,
+            independent_difference_variance=iv, variance_ratio_independent_over_crn=iv/pv if pv else None)
     if not days:
         service_sampling = "Synthetic Erlang(4), single-gate exponential"
     elif calibrated:
@@ -250,6 +280,7 @@ def run_experiments(output, replications=100, seed=553, config_path=None, data_p
                     input_sha256=hashlib.sha256(Path(data_path).read_bytes()).hexdigest() if days else None,
                     input_source=str(Path(data_path).resolve()) if days else "SYNTHETIC DEMONSTRATION — no BTS calibration",
                     selected_terminal=selected_terminal, gates=[asdict(g) for g in gates],
+                    terminal_scenarios=terminal_scenarios, crn_by_terminal=crn_by_terminal,
                     input_dates=list(days) if days else [],
                     calibration_profiles=profiles if calibrated else None,
                     input_mode=cfg["input_mode"] if days else "legacy_synthetic",
@@ -269,6 +300,8 @@ def run_experiments(output, replications=100, seed=553, config_path=None, data_p
     (output / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     from .plots import experiment_plots
     experiment_plots(summary, comparisons, cfg, output, synthetic=calibrated or not bool(days))
+    from .plots import terminal_policy_plots
+    terminal_policy_plots(summary, terminal_scenarios, cfg, output)
     return metadata
 
 

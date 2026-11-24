@@ -6,6 +6,7 @@ import shutil
 import hashlib
 from datetime import datetime
 import numpy as np
+from scipy.stats import t as student_t
 
 ROOT=Path(__file__).resolve().parents[1]
 REPORT=ROOT.parent/'report'
@@ -30,13 +31,95 @@ def replace_section(s,start,end,body):
     return s[:a]+start+'\n'+body+'\n'+s[b:]
 
 
+def crn_section(mode):
+    records=read(MAIN/mode/'replications.csv')
+    def values(scenario):
+        chosen=sorted((r for r in records if r['scenario']==scenario),key=lambda r:int(r['replication']))
+        assert [int(r['replication']) for r in chosen]==list(range(100))
+        return np.asarray([float(r['mean_wait']) for r in chosen])
+    dedicated=values('terminal_dedicated')
+    paired=values('terminal_pooled')-dedicated
+    independent=values('terminal_pooled_independent')-dedicated
+    raw=[]
+    for label,data in [('Common random numbers',paired),('Independent inputs',independent)]:
+        variance=float(data.var(ddof=1));mean=float(data.mean());n=len(data)
+        half=float(student_t.ppf(.975,n-1)*np.sqrt(variance/n))
+        raw.append(dict(method=label,n=n,mean_difference=mean,replication_difference_variance=variance,
+                        mean_estimator_variance=variance/n,ci_low=mean-half,ci_high=mean+half,ci_half_width=half))
+    meta=json.loads((MAIN/mode/'metadata.json').read_text())['crn']
+    assert np.isclose(raw[0]['replication_difference_variance'],meta['paired_difference_variance'])
+    assert np.isclose(raw[1]['replication_difference_variance'],meta['independent_difference_variance'])
+    ratio=raw[1]['replication_difference_variance']/raw[0]['replication_difference_variance']
+    assert np.isclose(ratio,meta['variance_ratio_independent_over_crn'])
+    with (REPORT/'results_main'/mode/'crn_comparison.csv').open('w',newline='') as f:
+        writer=csv.DictWriter(f,fieldnames=list(raw[0]));writer.writeheader();writer.writerows(raw)
+    text=r'''
+\textbf{Statistical variance reduction: common random numbers (CRN).}
+For T4 pooled-minus-dedicated mean waiting, we compare two sampling designs with 100 replications each. The CRN design gives both policies the same sampled date, arrivals, and flight-specific services: $D_r=P(U_r)-D(U_r)$. The independent-input comparator uses a separately seeded day and service realization for the pooled alternative, while retaining the same dedicated baseline: $D_r^{\mathrm{ind}}=P(U'_r)-D(U_r)$. Both target the same expected policy difference; they need not have identical finite-sample means.
+\[
+\operatorname{Var}(P-D)=\operatorname{Var}(P)+\operatorname{Var}(D)-2\operatorname{Cov}(P,D),
+\qquad \widehat{\operatorname{Var}}(\overline D)=s_D^2/100.
+\]
+'''
+    text+=table(['Sampling design',r'Mean $D$ (min)',r'95\% CI',r'$s_D^2$ (min$^2$)',r'$s_D^2/100$'],
+        [[r['method'],f"{r['mean_difference']:.2f}",interval(r),f"{r['replication_difference_variance']:.2f}",f"{r['mean_estimator_variance']:.3f}"] for r in raw],
+        'CRN precision comparison for T4 pooling versus dedicated queues. Variances describe the policy-difference statistic, not individual flight service times.')
+    text+=(f'The observed independent-to-CRN variance ratio is {ratio:.2f}; the estimated variance of the mean policy difference is '
+           f'{100*(1-1/ratio):.2f}\\% lower with CRN. At the same 100 replications, the independent-input confidence-interval half-width is '
+           f'{np.sqrt(ratio):.2f} times the CRN half-width. This is a comparison of sample variances conditional on this input model, '
+           'not a guaranteed efficiency factor or a measured reduction in airport delays.\n\n')
+    comparisons=[]
+    metadata=json.loads((MAIN/mode/'metadata.json').read_text())
+    for terminal,names in metadata['terminal_scenarios'].items():
+        baseline=values(names['dedicated'])
+        pv=float((values(names['pooled'])-baseline).var(ddof=1))
+        iv=float((values(names['pooled_independent'])-baseline).var(ddof=1))
+        assert np.isclose(pv,metadata['crn_by_terminal'][terminal]['paired_difference_variance'])
+        assert np.isclose(iv,metadata['crn_by_terminal'][terminal]['independent_difference_variance'])
+        comparisons.append(dict(terminal=terminal,n=100,crn_variance=pv,independent_variance=iv,ratio=iv/pv if pv else None))
+    with (REPORT/'results_main'/mode/'crn_by_terminal_comparison.csv').open('w',newline='') as f:
+        writer=csv.DictWriter(f,fieldnames=list(comparisons[0]));writer.writeheader();writer.writerows(comparisons)
+    text+=table(['Terminal',r'CRN $s_D^2$',r'Independent $s_D^2$','Variance ratio'],[
+        [r['terminal'],f"{r['crn_variance']:.2f}",f"{r['independent_variance']:.2f}",f"{r['ratio']:.2f}" if r['ratio'] is not None else 'Undefined'] for r in comparisons],
+        'CRN comparison for each terminal: pooled-minus-dedicated mean waiting, 100 replications. Ratios are independent variance divided by CRN variance.')
+    text+=r'''\textbf{Distinction from lower service variability.}
+The single-gate intervention $S'=m+0.5(S-m)$ changes the modeled service distribution, preserving its population mean and reducing its variance to one quarter. It can change actual simulated waiting. CRN instead changes how two policy runs are coupled; it preserves each policy's marginal input model and aims to estimate their difference more precisely. These are separate experiments, and both are retained in this report.
+'''
+    return text
+
+
+def all_terminal_section(mode):
+    meta=json.loads((MAIN/mode/'metadata.json').read_text())
+    pairs=read(MAIN/mode/'paired_differences.csv')
+    text=r'\textbf{Separate single-terminal results for T4, T5, and T8.}'+'\n'
+    text+='Each terminal is simulated on its own with four local gates and its own flights. These local experiments do not borrow gates from another terminal. All three policies share the same local input flights within a replication; each condition has 100 replications.\n'
+    data=[]
+    for terminal,names in meta['terminal_scenarios'].items():
+        for policy in ['dedicated','pooled','smoothed']:
+            r=stat(mode,names[policy])
+            data.append([terminal,policy.capitalize(),f"{float(r['mean']):.2f}",interval(r)])
+    text+=table(['Terminal','Local policy','Mean wait (min)',r'95\% CI'],data,
+                'Each terminal separately: four gates and 100 replications per local policy.')
+    text+=figure(f'results_main/{mode}/all_terminal_policies.pdf',
+                r'Single-terminal policy comparison across T4, T5, and T8. Error bars are pointwise 95\% confidence intervals.')
+    data=[]
+    for terminal,names in meta['terminal_scenarios'].items():
+        for baseline,alternative,label in [('dedicated','pooled','Pooling - dedicated'),('pooled','smoothed','Smoothing - pooling')]:
+            r=next(r for r in pairs if r['baseline']==names[baseline] and r['alternative']==names[alternative] and r['metric']=='mean_wait')
+            data.append([terminal,label,f"{float(r['mean']):.2f}",interval(r)])
+    text+=table(['Terminal','Comparison','Mean difference (min)',r'95\% paired CI'],data,
+                'Within-terminal policy effects with common random numbers. Differences are alternative minus baseline.')
+    return text
+
+
 def results(mode):
-    names=[('Dedicated terminal','terminal_dedicated'),('Pooled terminal','terminal_pooled'),('Smoothed terminal','terminal_smoothed'),
+    names=[('T4 dedicated','terminal_dedicated'),('T4 pooled','terminal_pooled'),('T4 smoothed','terminal_smoothed'),
         ('Network, no sharing','network_no_sharing'),('Sharing, 0 min','network_sharing_0'),('Sharing, 10 min','network_sharing_10'),
         ('Sharing, 20 min','network_sharing_20'),('Sharing, 40 min','network_sharing_40'),('One gate closed','network_closed_gate'),('Initially occupied','network_initial_occupied')]
     text=table(['Policy','Mean wait (min)',r'95\% CI'],[[label,f'{val(mode,key):.2f}',interval(stat(mode,key))] for label,key in names],
         'Original demand, four gates per terminal, 100 replications. No demand multiplication is applied.')
-    text+=figure(f'results_main/{mode}/experiment_overview.pdf',r'Aligned single-gate, T4 single-terminal, and three-terminal network results; replication means with 95\% confidence intervals.')
+    text+=figure(f'results_main/{mode}/experiment_overview.pdf',r'Single-gate, reference T4, and network overview. Separate results for all three terminals follow; error bars show 95\% confidence intervals.')
+    text+=all_terminal_section(mode)
     pairs=read(MAIN/mode/'paired_differences.csv')
     data=[]
     for rho in [.5,.7,.85,.95]:
@@ -44,7 +127,8 @@ def results(mode):
         d=next(r for r in pairs if r['alternative']==b and r['metric']=='mean_wait')
         data.append([f'{rho:.2f}',f'{val(mode,a):.2f}',f'{val(mode,b):.2f}',f"{float(d['mean']):.2f}",interval(d)])
     text+=table([r'$\rho$','Original','Lower variability','Difference',r'95\% paired CI'],data,'Single-gate mean waiting in minutes. This setting always uses one gate.')
-    text+=figure(f'results_main/{mode}/policy_differences.pdf','Paired policy differences: alternative minus baseline, mean waiting in minutes.','.74')
+    text+=figure(f'results_main/{mode}/policy_differences.pdf','Paired policy differences: alternative minus baseline, mean waiting in minutes.','.66')
+    text+=crn_section(mode)
     return text
 
 
@@ -133,7 +217,7 @@ def update_service_definition(s, reference):
 def main():
     # Audit original demand and alignment before changing report outputs.
     a=read(MAIN/'synthetic/replications.csv');b=read(MAIN/'bts/replications.csv')
-    assert len(a)==len(b)==2000
+    assert len(a)==len(b)==2800
     reference=read(ROOT/'data/processed/jfk_2025_07.csv')
     source_hash=hashlib.sha256((ROOT/'data/processed/jfk_2025_07.csv').read_bytes()).hexdigest()
     for row in reference:
@@ -199,7 +283,7 @@ def main():
     s=replace_section(s,r'\section*{I.6\quad Discussion}',r'\clearpage',discussion('synthetic'))
     s=replace_section(s,r'\section*{II.4\quad Results}',r'\section*{II.5\quad Interpretation and limitations}',results('bts'))
     observed=table(['Policy','Resampling','Observed-day replay',r'Replay 95\% CI'],[[label,f'{val("bts",key):.2f}',f'{val("bts_observed",key):.2f}',interval(stat('bts_observed',key))]
-        for label,key in [('T4 pooled','terminal_pooled'),('No sharing','network_no_sharing'),('Sharing, 0 min','network_sharing_0'),('Sharing, 40 min','network_sharing_40')]],
+        for label,key in [('T4 pooled','terminal_pooled'),('T5 pooled','terminal_T5_pooled'),('T8 pooled','terminal_T8_pooled'),('No sharing','network_no_sharing'),('Sharing, 0 min','network_sharing_0'),('Sharing, 40 min','network_sharing_40')]],
         'Sensitivity to service dependence at the original flight counts and four gates per terminal. Replay preserves each sampled day\'s original services and requests.')
     limitations=r'''
 The original-data study uses only retained observed flights, with no added copies. The empirical-resampling baseline still generates service assignments from real service samples; observed-day replay retains the original matched service values. Both use turnaround proxies rather than measured gate occupancy. There are no observed gate identifiers or complete gate trajectories. Tail-matched stays may include towing, and selected domestic carriers and same-day screening omit traffic. Capacities and compatibility are assumptions. Thus this case study does not establish actual JFK delays or an optimal airport gate count. Confidence intervals quantify simulation variation conditional on the selected inputs, excluding modeling and screening uncertainty.
@@ -212,6 +296,8 @@ The \texttt{main\_synthetic\_4.json}, \texttt{main\_bts\_4.json}, and \texttt{ma
 '''
     s=replace_section(s,r'\section*{II.6\quad Conclusion and reproducibility}',r'\begin{thebibliography}{9}',conclusion)
     s=update_service_definition(s,reference)
+    s=s.replace('2: Single terminal & T4 & 4 & DL flights on sampled date', '2: Single terminal & T4, T5, T8 separately & 4 each & Respective local flights')
+    s=s.replace('Twenty automated tests pass','Twenty-one automated tests pass')
     replication_table=table(['Experiment','Independent replications'],[
         ['Calibrated synthetic main study','100 per policy'],['BTS main study','100 per policy'],
         ['Observed-day sensitivity','100 per policy'],['Synthetic scaling grid','100 per configuration/policy'],

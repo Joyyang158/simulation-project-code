@@ -31,7 +31,7 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(metadata["replications"], 2)
             self.assertEqual(len(metadata["input_sha256"]), 64)
             replications = read_csv(root / "output" / "replications.csv")
-            self.assertEqual(len(replications), 40)
+            self.assertEqual(len(replications), 48)
             self.assertTrue((root / "output" / "experiment_overview.pdf").is_file())
             diff = read_csv(root / "output" / "paired_differences.csv")
             self.assertTrue(all(float(r["mean"]) == 0 for r in diff if r["metric"] == "n_flights"))
